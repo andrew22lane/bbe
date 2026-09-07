@@ -94,6 +94,10 @@ gate and a rendered page in a real browser.
 
 | Repo | Status |
 |---|---|
-| `gab-site` | migrated 2026-09-07 |
-| `design-hacker-apex` | migrated 2026-09-07 |
+| `gab-site` | PR [#2](https://github.com/andrew22lane/gab-site/pull/2) open to `main`, 2026-09-07 |
+| `design-hacker-apex` | PR [#11](https://github.com/andrew22lane/design-hacker-apex/pull/11) open to `staging`, 2026-09-07 |
 | `bex-site` | pending, after its `staging` → `main` merge lands |
+
+Each consumer's Cloudflare Pages project needs `NPM_TOKEN` set before its next
+build, and this package needs those repos added under its own Actions access
+list before any CI job in them runs `npm install`.
