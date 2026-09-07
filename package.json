@@ -1,0 +1,31 @@
+{
+  "name": "@designhacker/bbe",
+  "version": "1.0.0",
+  "description": "The Brand Builder Engine as one package: the shared static-site engine core, the brand-drift and gate-lint gates, the pack token builder, and the byte-identity prover. Consumers install it and pin a version. Nothing is copied.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andrew22lane/bbe.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "exports": {
+    "./engine": "./engine/lib.mjs",
+    "./tools/*": "./tools/*"
+  },
+  "bin": {
+    "bbe-gate": "tools/gate-lint.mjs",
+    "bbe-tokens": "tools/build-tokens.mjs"
+  },
+  "files": [
+    "engine/",
+    "tools/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
