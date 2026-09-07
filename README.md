@@ -1,4 +1,4 @@
-# @designhacker/bbe
+# @andrew22lane/bbe
 
 The Brand Builder Engine, as one installable package. Private. Internal.
 
@@ -21,17 +21,35 @@ of copy.
 Brand packs still live in the vault (`dh-hub/vault/core/brand-packs/`). Phase 2
 moves them in here so a brand change becomes a versioned release.
 
+## Why the scope is `@andrew22lane` and not `@designhacker`
+
+GitHub Packages requires an npm package's scope to be the account or organization
+that owns the repository. `@designhacker/bbe` was attempted first, from this repo,
+on tag `v1.0.0`, and GitHub refused it:
+
+```
+npm error 403 Forbidden - PUT https://npm.pkg.github.com/@designhacker%2fbbe
+npm error 403 Permission permission_denied: The requested installation does not exist.
+```
+
+There is no `designhacker` GitHub organization. The two that exist are
+`brand-builder-bot` and `brandbuilderpros`. So the published name is
+`@andrew22lane/bbe` from `v1.0.1` on. Changing it later means creating a
+`designhacker` org, transferring this repo into it, publishing under the new
+scope, and bumping one line plus one `.npmrc` line in each consumer. That is
+Andrew's call, not a blocker.
+
 ## Install
 
 ```
-npm install @designhacker/bbe@1.0.0
+npm install @andrew22lane/bbe@1.0.1
 ```
 
 Every consumer commits an `.npmrc` (see below) and pins an exact version. No
 carets. A range would let a build pick up an engine change nobody diffed.
 
 ```js
-import { createEngine } from '@designhacker/bbe/engine';
+import { createEngine } from '@andrew22lane/bbe/engine';
 ```
 
 ## How to change the engine
@@ -55,11 +73,11 @@ been pushed. Consumers then change one line each: the pinned version in their
 ## How to add a consumer
 
 A new surface needs four things and none of them is a copy of this repo. One,
-`npm install @designhacker/bbe@<exact version>` and an `.npmrc` in the repo root
-holding `@designhacker:registry=https://npm.pkg.github.com` and
+`npm install @andrew22lane/bbe@<exact version>` and an `.npmrc` in the repo root
+holding `@andrew22lane:registry=https://npm.pkg.github.com` and
 `//npm.pkg.github.com/:_authToken=${NPM_TOKEN}` — the token comes from the build
 environment, never from the file. Two, `import { createEngine } from
-'@designhacker/bbe/engine'` in its build script, and no `engine/` folder of its
+'@andrew22lane/bbe/engine'` in its build script, and no `engine/` folder of its
 own; if it already has one, delete it in the same PR that adds the dependency,
 along with any `tools/engine-parity.mjs`, which now has nothing to guard. Three,
 its brand pack, which stays in the vault in this phase and is mirrored into
