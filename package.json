@@ -1,6 +1,6 @@
 {
   "name": "@andrew22lane/bbe",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "The Brand Builder Engine as one package: the shared static-site engine core, the brand-drift and gate-lint gates, the pack token builder, the byte-identity prover, and `bbe new-surface`, which scaffolds a new site or worker that is clean by construction. Consumers install it and pin a version. Nothing is copied.",
   "type": "module",
   "license": "UNLICENSED",
@@ -27,6 +27,7 @@
     "bin/",
     "engine/",
     "tools/",
+    "templates/",
     "README.md"
   ],
   "engines": {

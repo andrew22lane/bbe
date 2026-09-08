@@ -156,7 +156,31 @@ export function resolvePackPath(pack, vault = VAULT_DEFAULT) {
 }
 
 // ---------- the scan ----------
-export function scanRepo({ repo, pack = null, packPath = null, include = DEFAULT_INCLUDE_EXT, exclude = DEFAULT_EXCLUDE }) {
+// TWO CALL SHAPES, one implementation. The object form is what
+// vault/core/engine/estate-status.mjs has always called and must keep working:
+//
+//   scanRepo({ repo, pack, packPath, include, exclude })
+//
+// The positional form is the one a consumer reaches for, and the one bbe-gate uses:
+//
+//   scanRepo(repoDir, packSlugOrPath, { exclude })
+//
+// They land on the same code path on purpose. The bex CI count (110) disagreeing
+// with the nightly estate count (283) on one unchanged tree was never two different
+// scanners; it was two different EXCLUDE lists reaching one scanner. So there is
+// one scanner, and the exclude list is the thing a repo declares out loud, in
+// bbe.config.json.
+export function scanRepo(a, b, c) {
+  const opts = typeof a === 'string'
+    ? { repo: a, ...(b ? { pack: b } : {}), ...(c || {}) }
+    : (a || {});
+  const {
+    repo,
+    pack = null,
+    packPath = null,
+    include = DEFAULT_INCLUDE_EXT,
+    exclude = DEFAULT_EXCLUDE
+  } = opts;
   const absRepo = resolve(repo);
   if (!existsSync(absRepo)) {
     return { error: `repo not found: ${absRepo}` };

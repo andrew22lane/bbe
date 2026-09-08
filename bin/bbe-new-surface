@@ -149,11 +149,12 @@ function gitignore() {
   ].join('\n');
 }
 
-function baseline() {
+function bbeConfig() {
   return JSON.stringify({
     pack: SLUG,
-    brand_count: 0,
-    note: `Ratchet, not a target. CI fails only when the BRAND count (bbe-gate, scanned against this repo's own brand/${SLUG}.brandpack.json mirror) rises above this number. Scaffolded by @andrew22lane/bbe ${PKG.version} new-surface at zero, because a surface that starts on the engine and reads every colour from the pack has nothing to count. Lower it never; if it ever needs raising, something typed a brand fact into code and that is the bug, not this file.`
+    exclude: [],
+    baseline: 0,
+    note: `Ratchet, not a target. \`npx bbe-gate\` fails only when the BRAND count (scanned against this repo's own brand/${SLUG}.brandpack.json mirror) rises above "baseline". Scaffolded by @andrew22lane/bbe ${PKG.version} new-surface at zero, because a surface that starts on the engine and reads every colour from the pack has nothing to count. "exclude" is ADDITIVE to the gate's defaults (node_modules, .git, dist, dot-paths, tools) and should match this repo's row in vault/core/engine/estate.json, so the CI number and the nightly number are the same number. Lower "baseline" with \`npx bbe-gate --write-baseline\`; if it ever needs raising, something typed a brand fact into code and that is the bug, not this file.`
   }, null, 2) + '\n';
 }
 
@@ -212,39 +213,29 @@ process.exit(1);
 }
 
 function workflow() {
+  // The consumer workflow is the template this package ships, verbatim, with the
+  // tag pinned to the version that scaffolded the repo. It contains no gate logic:
+  // the gate is a reusable workflow in andrew22lane/bbe, so bumping it is one line.
+  const templatePath = path.join(HERE, '..', 'templates', 'brand-gate.yml');
+  const template = fs.readFileSync(templatePath, 'utf8')
+    .replace(/@v[0-9]+\.[0-9]+\.[0-9]+\s*$/m, `@v${PKG.version}`);
+
+  // Everything past the gate is this surface's own business, so it goes in its own
+  // job rather than into the shared workflow every repo calls.
   const extra = KIND === 'site'
-    ? `
-      - name: build
+    ? `      - name: build
         run: npm run build
 `
-    : `
-      - name: tokens (generated from the pack mirror)
+    : `      - name: tokens (generated from the pack mirror)
         run: npm run tokens
 
       - name: worker builds (dry run, no deploy)
         run: npx wrangler deploy --dry-run
 `;
-  return `name: Brand gate (lock #1 — no hardcoded hex)
 
-# The gate comes from the package, not from a copy of it. Before @andrew22lane/bbe
-# every repo carried its own byte-copy of brand-drift.mjs plus brand-gate-check.mjs
-# plus a gate-parity.mjs whose only job was to prove the copy had not drifted.
-# \`npx bbe-gate\` is that same check, installed. There is nothing here to drift.
-#
-# The RATCHET lives in tools/brand-gate-baseline.json: this job fails only when the
-# BRAND count RISES above the committed number. This repo was scaffolded at zero.
-# Lower it never; it needing a raise means a brand fact got typed into code.
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
-permissions:
-  contents: read
-
-jobs:
-  brand-gate:
+  return `${template}
+  # This repo's own checks. The gate above is shared; these are not.
+  surface:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -253,19 +244,14 @@ jobs:
         with:
           node-version: '20'
 
-      - name: install (pulls the engine package)
-        run: npm install
-
-      - name: brand-drift selftest
-        run: npx bbe-gate --selftest
-
-      - name: brand gate (ratchet against tools/brand-gate-baseline.json)
-        run: npx bbe-gate
+      - name: install
+        run: npm install --no-audit --no-fund
 
       - name: pack parity (mirror vs the vault's canonical pack)
         env:
           PACK: ${SLUG}
         run: node tools/pack-parity.mjs
+
 ${extra}`;
 }
 
@@ -582,13 +568,15 @@ function readme() {
 build.mjs      structure and routes. zero brand facts.
 site.css       structure. every colour is var(--bbe-*).
 brand/         MIRROR of the vault pack. never edited here.
-tools/         pack-parity.mjs, brand-gate-baseline.json
+bbe.config.json  pack, excludes, and the gate's ratchet baseline
+tools/         pack-parity.mjs
 \`\`\``;
   const layoutWorker = `\`\`\`
 src/index.js             the page. zero brand facts.
 src/tokens.generated.js  GENERATED from the pack. not committed. not edited.
 brand/                   MIRROR of the vault pack. never edited here.
-tools/                   build-tokens.mjs (a shim), pack-parity.mjs, brand-gate-baseline.json
+bbe.config.json          pack, excludes, and the gate's ratchet baseline
+tools/                   build-tokens.mjs (a shim), pack-parity.mjs
 wrangler.toml            name, entry, pinned compatibility_date
 \`\`\``;
 
@@ -610,7 +598,7 @@ That is not a style preference. Twenty-one surfaces in this estate were each
 hand-built by somebody typing CSS, and on 2026-09-07 the drift report counted 406
 hardcoded brand values across them at \`origin/main\`. Every one of those started as
 one reasonable-looking hex in one file. \`npx bbe-gate\` fails this repo the moment
-the count rises above \`tools/brand-gate-baseline.json\`, which was scaffolded at
+the count rises above the \`baseline\` in \`bbe.config.json\`, which was scaffolded at
 **0**. It runs in CI on every pull request and every push to \`main\`.
 
 To change a colour: edit the pack in the vault, copy it over \`brand/\`, and run
@@ -667,7 +655,7 @@ if (KIND === 'site') {
     '.node-version': '20\n',
     [`brand/${SLUG}.brandpack.json`]: packRaw,
     'tools/pack-parity.mjs': packParity(),
-    'tools/brand-gate-baseline.json': baseline(),
+    'bbe.config.json': bbeConfig(),
     '.github/workflows/brand-gate.yml': workflow()
   });
 } else {
@@ -681,7 +669,7 @@ if (KIND === 'site') {
     [`brand/${SLUG}.brandpack.json`]: packRaw,
     'tools/build-tokens.mjs': workerBuildTokens(),
     'tools/pack-parity.mjs': packParity(),
-    'tools/brand-gate-baseline.json': baseline(),
+    'bbe.config.json': bbeConfig(),
     '.github/workflows/brand-gate.yml': workflow()
   });
 }

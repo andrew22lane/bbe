@@ -18,7 +18,7 @@ of copy.
 | `tools/build-tokens.mjs` | Generates `src/tokens.generated.js` from a brand pack's `outputs.web`. `bbe-tokens` on the CLI. |
 | `tools/verify-byte-identity.mjs` | Walks two build trees, sha256s every file, exits 1 on any difference. The proof every migration ships with. |
 | `bin/bbe-new-surface` | The scaffold. Writes a new site or worker that reads a brand pack for every colour and has the gate in CI at a baseline of zero. `bbe new-surface` on the CLI. |
-| `bin/bbe-gate` | The repo gate a consumer runs in CI: the drift scan plus the ratchet against its own `tools/brand-gate-baseline.json`. Installed, never copied. `bbe-gate` on the CLI. |
+| `bin/bbe-gate` | The repo gate a consumer runs in CI: the drift scan plus the ratchet against its own `bbe.config.json`. Installed, never copied. `bbe-gate` on the CLI. |
 | `bin/bbe` | The subcommand front door, so `npx @andrew22lane/bbe <thing>` works. Pure delegation. |
 | `tools/starter-tokens.mjs` | The two things a brand-blind starter page needs: one custom property per palette colour, named from the pack's own key, and two measured placeholder roles. |
 | `test/smoke.mjs` | Scaffolds both kinds from `test/fixtures/fixture.brandpack.json`, builds them, and asserts the gate reads zero. Runs in CI on every PR. |
@@ -47,7 +47,7 @@ Andrew's call, not a blocker.
 ## Install
 
 ```
-npm install @andrew22lane/bbe@1.1.0
+npm install @andrew22lane/bbe@1.2.0
 ```
 
 That is the GitHub Packages form and it needs a token. What every consumer in the
@@ -55,7 +55,7 @@ estate actually ships is the **git tag** form, which needs no registry, no `.npm
 and no secret anywhere:
 
 ```json
-"dependencies": { "@andrew22lane/bbe": "github:andrew22lane/bbe#v1.1.0" }
+"dependencies": { "@andrew22lane/bbe": "github:andrew22lane/bbe#v1.2.0" }
 ```
 
 Either way, pin an EXACT version. No carets, no ranges, no branch names. A range
@@ -78,7 +78,7 @@ against your branch with the SAME pinned `BUILD_ID` and `BUILD_TIME`, and run
 diff you did not intend is a bug in your change, not noise in the tool.
 
 Then bump `version` in `package.json`, merge, and push a tag matching it
-(`v1.1.0`). The Action publishes to GitHub Packages using the workflow's own
+(`v1.2.0`). The Action publishes to GitHub Packages using the workflow's own
 `GITHUB_TOKEN`; there is no PAT and no repository secret in this repo. If a
 publish fails, fix it and tag one patch higher. Never force-move a tag that has
 been pushed. Consumers then change one line each: the pinned version in their
@@ -130,8 +130,9 @@ nothing and says so. It refuses a non-empty directory it did not create.
 build.mjs      structure and routes. imports createEngine + resolvePack from the package.
 site.css       structure. every colour is var(--bbe-*).
 brand/         the pack mirror.
-tools/         pack-parity.mjs, brand-gate-baseline.json at 0
-.github/       brand-gate.yml — npm install, bbe-gate --selftest, bbe-gate, pack parity, build
+bbe.config.json  pack, excludes, and the gate's ratchet baseline at 0
+tools/         pack-parity.mjs
+.github/       brand-gate.yml — eight lines, calls the reusable gate, plus this repo's own build job
 ```
 
 ### What a worker gets
@@ -153,12 +154,49 @@ had not drifted. `npx bbe-gate` is that check installed, so the parity file has
 nothing left to guard and does not exist in a scaffolded repo.
 
 The ratchet contract is deliberately unchanged: the job fails only when the BRAND
-count RISES above `tools/brand-gate-baseline.json`. A scaffolded repo starts at 0, so
+count RISES above the `baseline` in `bbe.config.json`. A scaffolded repo starts at 0, so
 it should never need lowering, and needing a raise means a brand fact got typed into
 code, which is the bug. On top of `brand-drift`'s own exclusions (`node_modules`,
 `dist`, dot-paths, `*.brandpack.json`, and any file whose first 400 characters say
 GENERATED and name its brandpack) `bbe-gate` also excludes `tools`, which holds the
 token plumbing rather than page paint.
+
+### One config file, and why it has an `exclude` list
+
+`bbe.config.json` at the repo root is the whole configuration:
+
+```json
+{ "pack": "gabriella", "exclude": ["data"], "baseline": 4 }
+```
+
+The baseline used to live in a second file that nothing else read. Two files to
+configure one check is one file too many, so it folded in. A repo still carrying the
+old `tools/brand-gate-baseline.json` keeps gating off it, with a note, so nothing goes
+dark mid-migration.
+
+`exclude` is ADDITIVE to the defaults, the same contract `vault/core/engine/estate.json`
+already uses, and it exists because of a real bug: bex CI read 110 brand hits while the
+nightly estate report read 283 on the same unchanged tree. That was never two scanners.
+It was two exclude lists reaching one scanner, one of them written down in estate.json
+and the other one not written down anywhere. Now the repo declares its own list out
+loud, next to its baseline, and a repo's `exclude` should be the same list its
+estate.json row carries.
+
+### The reusable workflow
+
+The gate's CI steps live in `.github/workflows/bbe-gate.yml` in this repo, behind
+`workflow_call`. A consumer's whole workflow is the eight lines in
+`templates/brand-gate.yml`:
+
+```yaml
+jobs:
+  brand-gate:
+    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.2.0
+```
+
+It checks out, sets up Node, installs (`npm ci` with a lockfile, `npm install`
+without), runs `bbe-gate --selftest`, then runs `bbe-gate`. Migrating an existing repo:
+`docs/MIGRATE-GATE.md`.
 
 ### The placeholder roles, and why they are named the way they are
 
@@ -209,8 +247,10 @@ own; if it already has one, delete it in the same PR that adds the dependency,
 along with any `tools/engine-parity.mjs`, which now has nothing to guard. Three,
 its brand pack, which stays in the vault in this phase and is mirrored into
 `brand/` with `tools/pack-parity.mjs` still guarding that mirror. Four, the gate
-in CI, running `bbe-gate` with a ratchet baseline equal to the repo's count on
-the day it lands, so the number can fall and never rise.
+in CI, which is `bbe.config.json` plus the eight-line workflow from
+`templates/brand-gate.yml`, with a ratchet baseline equal to the repo's count on
+the day it lands, so the number can fall and never rise. `docs/MIGRATE-GATE.md`
+is the exact recipe.
 
 The first build after wiring it up is not "done" until you have run
 `verify-byte-identity` between the output the surface shipped before and the

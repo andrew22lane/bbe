@@ -1,0 +1,80 @@
+name: bbe-gate (reusable)
+
+# The brand gate, once, for every repo in the estate.
+#
+# A consumer does not copy this file. It calls it:
+#
+#   jobs:
+#     brand-gate:
+#       uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.2.0
+#
+# That is the whole consumer workflow. Before this, sixteen repos each carried a
+# vendored brand-drift.mjs + brand-gate-check.mjs + gate-parity.mjs + a baseline
+# JSON + their own copy of these steps. Measured 2026-09-08: three different
+# revisions of brand-drift.mjs were live at the same time, so "the gate" meant
+# three different things depending on which repo you were standing in.
+#
+# What it runs, against the caller's checkout:
+#   1. npm ci when there is a lockfile, npm install when there is not
+#   2. bbe-gate --selftest   — the scanner plants a defect in a fixture and asserts RED
+#   3. bbe-gate              — the ratchet, against the caller's bbe.config.json
+#
+# Nothing here builds the consumer's site or deploys anything. A repo that also
+# wants its build checked adds its own job next to the `uses:` one.
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node version for the gate run.'
+        required: false
+        type: string
+        default: '20'
+      working-directory:
+        description: 'Directory holding bbe.config.json, if it is not the repo root.'
+        required: false
+        type: string
+        default: '.'
+      ref:
+        description: 'Ref to check out. Defaults to the event ref.'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  brand-gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      # npm ci needs a lockfile and fails without one. Most surfaces in this estate
+      # have no lockfile because they have no runtime dependencies beyond the engine,
+      # so pick the right one instead of asking every repo to commit a lockfile it
+      # does not otherwise need.
+      - name: install
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "lockfile present -> npm ci"
+            npm ci --no-audit --no-fund
+          else
+            echo "no lockfile -> npm install"
+            npm install --no-audit --no-fund
+          fi
+
+      - name: brand-drift selftest
+        run: npx bbe-gate --selftest
+
+      - name: brand gate (ratchet against bbe.config.json)
+        run: npx bbe-gate
