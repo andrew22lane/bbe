@@ -1,0 +1,54 @@
+#!/usr/bin/env node
+// bbe — the subcommand front door, so `npx @andrew22lane/bbe <thing>` works.
+//
+// npx runs the bin whose name matches the package, which for @andrew22lane/bbe is
+// this file. Everything it does is delegate; no logic lives here, because a
+// dispatcher that grows logic is a dispatcher two commands disagree with.
+//
+//   npx @andrew22lane/bbe new-surface --pack <slug> --kind site|worker --name <repo>
+//   npx @andrew22lane/bbe gate
+//   npx @andrew22lane/bbe tokens --pack brand/<slug>.brandpack.json --out src/tokens.generated.js
+//   npx @andrew22lane/bbe verify-byte-identity <dirA> <dirB>
+//   npx @andrew22lane/bbe gate-lint --brand bex
+
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PKG = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'package.json'), 'utf8'));
+
+const COMMANDS = {
+  'new-surface': path.join(HERE, 'bbe-new-surface'),
+  gate: path.join(HERE, 'bbe-gate'),
+  tokens: path.join(HERE, '..', 'tools', 'build-tokens.mjs'),
+  'gate-lint': path.join(HERE, '..', 'tools', 'gate-lint.mjs'),
+  'brand-drift': path.join(HERE, '..', 'tools', 'brand-drift.mjs'),
+  'verify-byte-identity': path.join(HERE, '..', 'tools', 'verify-byte-identity.mjs')
+};
+
+const [cmd, ...rest] = process.argv.slice(2);
+
+if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
+  console.log(`@andrew22lane/bbe ${PKG.version}\n`);
+  console.log('  bbe new-surface           scaffold a new site or worker on a brand pack');
+  console.log('  bbe gate                  the brand gate for the current repo (bbe-gate)');
+  console.log('  bbe tokens                generate tokens.generated.js from a pack');
+  console.log('  bbe gate-lint             the seven-check vault gate');
+  console.log('  bbe brand-drift           the drift scanner on its own');
+  console.log('  bbe verify-byte-identity  prove two build trees are identical');
+  console.log('\nEach one takes --help.');
+  process.exit(cmd ? 0 : 1);
+}
+
+if (cmd === '--version' || cmd === '-v') { console.log(PKG.version); process.exit(0); }
+
+const target = COMMANDS[cmd];
+if (!target) {
+  console.error(`FAIL: unknown command "${cmd}". Known: ${Object.keys(COMMANDS).join(', ')}`);
+  process.exit(1);
+}
+
+const r = spawnSync(process.execPath, [target, ...rest], { stdio: 'inherit' });
+process.exit(r.status === null ? 1 : r.status);

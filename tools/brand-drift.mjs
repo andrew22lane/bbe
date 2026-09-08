@@ -32,7 +32,7 @@ const DEFAULT_INCLUDE_EXT = ['.mjs', '.js', '.cjs', '.ts', '.css', '.html', '.sv
 // filename), not a substring of the full path, so a repo named e.g. "dist-site" that is
 // not actually a build output dir does not vanish by accident. `*` is a simple glob:
 // matches any run of characters within the segment.
-const DEFAULT_EXCLUDE = [
+export const DEFAULT_EXCLUDE = [
   'node_modules', '.git', '.wrangler', 'dist', 'dist-*', 'blog-dist', '_astro',
   'static/assets/vendor', 'vendor', '.bak*', '*.bak*', 'src.bak*',
   // Any dot-directory or dot-file. Added 2026-09-03 after a sibling session's untracked
