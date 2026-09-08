@@ -141,6 +141,19 @@ empty), so a bump changes no build output. **If the repo has a `package-lock.jso
 The repo is public, so this needs no registry, no `.npmrc` and no token, on this Mac or
 in a runner or on Cloudflare's builder.
 
+> **Two traps, both hit on the gab-site migration.**
+>
+> 1. **`npm install` on its own will not move a git dependency off the pin in the
+>    lockfile.** It reported "changed 0 packages" and left v1.0.1 in place. Name the
+>    version: `npm install "@andrew22lane/bbe@github:andrew22lane/bbe#v1.2.0"`. Check
+>    what you actually got before measuring anything:
+>    `node -p "require('./node_modules/@andrew22lane/bbe/package.json').version"`.
+> 2. **v1.0.1 mapped the `bbe-gate` bin to `tools/gate-lint.mjs`**, a different tool
+>    entirely, so `npx bbe-gate` on a repo pinned to v1.0.1 prints
+>    `usage: gate-lint.mjs --brand <bex|dh>` and never gates. Fixed in v1.1.0. If you
+>    see that usage line, the bump did not take. Confirm with
+>    `ls -l node_modules/.bin/bbe-gate` — it must point at `bin/bbe-gate`.
+
 **5. Delete the five vendored files.**
 
 ```bash
@@ -228,6 +241,13 @@ follow-up PR, not this one.
 | `franchise-watchlist-site` | `franchise-watchlist` | 0 | no | — | — |
 | `bbe-ask` | `bex-co` | 0 | yes | `src/theme.css.js`, `emails` | — |
 | `bex-forms` | `bex-co` | 0 | no | `deployed` | — |
+
+**Two already migrated, as the proof this recipe works** (2026-09-08):
+
+| Repo | old count | new count | PR | CI |
+|---|---|---|---|---|
+| `gab-site` | 4 (baseline 4) | 4 (baseline 4) | andrew22lane/gab-site#3 | green, `npm ci` path |
+| `dh-capture` | 0 (baseline 0) | 0 (baseline 0) | andrew22lane/dh-capture#2 | green, `npm install` path |
 
 `vhc-site` and `kelli-engine` are not on this list: neither has a brand gate to migrate.
 VHC gets one inside its r5 rebuild.
