@@ -2,31 +2,50 @@
 // bbe-gate — the brand gate a consumer repo runs, from the package, not from a
 // vendored copy of it.
 //
-//   npx bbe-gate               scan the current repo, ratchet against the baseline
-//   npx bbe-gate --selftest    plant a defect in a fixture, assert the scanner goes RED
-//   npx bbe-gate --repo <dir>  scan somewhere other than the cwd
+//   npx bbe-gate                    scan the current repo, ratchet against the baseline
+//   npx bbe-gate --repo <dir>       scan somewhere other than the cwd
+//   npx bbe-gate --write-baseline   lower bbe.config.json's baseline to today's count
+//   npx bbe-gate --json             machine-readable result on stdout
+//   npx bbe-gate --selftest         plant a defect in a fixture, assert the scanner goes RED
 //
 // Exit 0 clean or improved. Exit 1 the BRAND count rose above the baseline.
-// Exit 2 the gate could not run (no baseline, no pack mirror, bad input).
+// Exit 2 the gate could not run (no config, no pack mirror, bad input).
 //
 // WHY THIS EXISTS. Before the package, every repo carried its own byte-copy of
 // brand-drift.mjs plus its own brand-gate-check.mjs plus a gate-parity.mjs whose
 // only job was to prove the copy had not drifted. Three files and a whole class
-// of drift, to run one check. This is that check, installed instead of copied,
-// so the parity file has nothing left to guard.
+// of drift, to run one check. On 2026-09-08 those copies were measured: three
+// different revisions of brand-drift.mjs were live across the estate at once.
+// This is that check, installed instead of copied, so the parity file has nothing
+// left to guard.
 //
-// The RATCHET is the same contract those copies carried, deliberately unchanged:
-// the job fails only when the BRAND count RISES above tools/brand-gate-baseline.json.
-// A baseline is lowered by hand in the PR that cleans the hits. It is never raised
-// by hand to silence a regression. A gate that goes red on routine work gets
-// switched off, and then it protects nothing.
+// ONE CONFIG FILE. `bbe.config.json` at the repo root:
 //
-// EXCLUSIONS on top of brand-drift's own defaults (node_modules, dist, dot-paths,
-// *.brandpack.json, generated files that name their pack): `tools`. The tools
-// directory holds the gate's own fixtures and the token builder, which quote
-// colours as test data and as pack plumbing, not as page paint.
+//   {
+//     "pack": "gabriella",        // -> brand/gabriella.brandpack.json
+//     "exclude": ["data"],        // ADDITIVE to the defaults below
+//     "baseline": 4               // the ratchet
+//   }
+//
+// The baseline used to live in a second file (tools/brand-gate-baseline.json) that
+// nothing else read. Two files to configure one check is one file too many, so the
+// baseline folded in. The old file is still honoured when bbe.config.json is absent,
+// so a repo that has not migrated yet keeps gating.
+//
+// THE EXCLUDE CONTRACT is the one estate.json already uses: whatever a repo lists is
+// ADDED to the defaults, never replaces them. Defaults are brand-drift's own
+// (node_modules, .git, dist, dot-paths, *.brandpack.json, files whose header says they
+// were GENERATED from a pack) plus `tools`, because the tools directory holds gate
+// fixtures and token plumbing that quote colours as test data, not as page paint. A
+// repo's `exclude` here should be the same list its estate.json row carries, so the
+// CI number and the nightly number are the same number.
+//
+// THE RATCHET is deliberately unchanged from the copies this replaces: the job fails
+// only when the BRAND count RISES above the baseline. `--write-baseline` lowers it and
+// refuses to raise it. A gate that goes red on routine work gets switched off, and
+// then it protects nothing.
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -34,19 +53,34 @@ import { scanRepo, DEFAULT_EXCLUDE } from '../tools/brand-drift.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DRIFT = path.join(HERE, '..', 'tools', 'brand-drift.mjs');
+const PKG = JSON.parse(readFileSync(path.join(HERE, '..', 'package.json'), 'utf8'));
 
-// Excluded on top of brand-drift's defaults. Kept here, in one place, so every
-// repo the scaffold creates gates on the same footprint.
+// Excluded on top of brand-drift's defaults, for every repo on this gate.
 const EXTRA_EXCLUDE = ['tools'];
+
+const CONFIG_NAME = 'bbe.config.json';
+const LEGACY_BASELINE = path.join('tools', 'brand-gate-baseline.json');
 
 function argOf(flag) {
   const i = process.argv.indexOf(flag);
-  return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : null;
+  return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : null;
 }
 const has = (flag) => process.argv.includes(flag);
+const JSON_OUT = has('--json');
+const say = (...a) => { if (!JSON_OUT) console.log(...a); };
 
 if (has('--help') || has('-h')) {
-  console.log('usage: bbe-gate [--repo <dir>] [--selftest]');
+  console.log(`bbe-gate (@andrew22lane/bbe ${PKG.version})
+
+usage: bbe-gate [--repo <dir>] [--write-baseline] [--json] [--selftest]
+
+Reads bbe.config.json at the repo root:
+  { "pack": "<slug>", "exclude": ["<dir>", ...], "baseline": <number> }
+
+  --repo <dir>       scan somewhere other than the cwd
+  --write-baseline   lower "baseline" to the count just measured (never raises it)
+  --json             print the result as JSON, nothing else
+  --selftest         run brand-drift's own planted-defect selftest`);
   process.exit(0);
 }
 
@@ -57,60 +91,149 @@ if (has('--selftest')) {
   process.exit(r.status === null ? 2 : r.status);
 }
 
+function die(msg, extra = []) {
+  if (JSON_OUT) console.log(JSON.stringify({ ok: false, error: msg }, null, 2));
+  else {
+    console.error(`FAIL: ${msg}`);
+    for (const l of extra) console.error(l);
+  }
+  process.exit(2);
+}
+
 const repoRoot = path.resolve(argOf('--repo') || process.cwd());
-const baselinePath = path.join(repoRoot, 'tools', 'brand-gate-baseline.json');
+const configPath = path.join(repoRoot, CONFIG_NAME);
+const legacyPath = path.join(repoRoot, LEGACY_BASELINE);
 
-if (!existsSync(baselinePath)) {
-  console.error(`FAIL: baseline missing at ${baselinePath}`);
-  console.error('A repo on the gate carries tools/brand-gate-baseline.json holding {"pack","brand_count"}.');
-  process.exit(2);
+// ---------------------------------------------------------------- the config
+let config = null;
+let configSource = null;
+
+if (existsSync(configPath)) {
+  try { config = JSON.parse(readFileSync(configPath, 'utf8')); }
+  catch (e) { die(`${CONFIG_NAME} is not valid JSON: ${e.message}`); }
+  configSource = configPath;
+} else if (existsSync(legacyPath)) {
+  // Pre-v1.2.0 repos. Same two fields under their old names, no exclude list.
+  let legacy;
+  try { legacy = JSON.parse(readFileSync(legacyPath, 'utf8')); }
+  catch (e) { die(`${LEGACY_BASELINE} is not valid JSON: ${e.message}`); }
+  config = { pack: legacy.pack, baseline: legacy.brand_count, exclude: [] };
+  configSource = legacyPath;
+  say(`note: reading the legacy ${LEGACY_BASELINE}. Migrate to ${CONFIG_NAME} — see docs/MIGRATE-GATE.md in andrew22lane/bbe.`);
+} else {
+  die(`no ${CONFIG_NAME} at ${repoRoot}`, [
+    'A repo on the gate carries bbe.config.json at its root:',
+    '  { "pack": "<slug>", "exclude": [], "baseline": <number> }',
+    'Recipe: docs/MIGRATE-GATE.md in andrew22lane/bbe.'
+  ]);
 }
 
-let baseline;
-try { baseline = JSON.parse(readFileSync(baselinePath, 'utf8')); }
-catch (e) { console.error(`FAIL: ${baselinePath} is not valid JSON: ${e.message}`); process.exit(2); }
-
-if (!baseline.pack || typeof baseline.brand_count !== 'number') {
-  console.error(`FAIL: ${baselinePath} needs a "pack" slug and a numeric "brand_count"`);
-  process.exit(2);
+if (!config.pack || typeof config.pack !== 'string') {
+  die(`${configSource} needs a "pack" slug (the basename of brand/<slug>.brandpack.json)`);
+}
+if (typeof config.baseline !== 'number' || !Number.isFinite(config.baseline) || config.baseline < 0) {
+  die(`${configSource} needs a numeric "baseline" >= 0`);
+}
+if (config.exclude != null && (!Array.isArray(config.exclude) || config.exclude.some((e) => typeof e !== 'string'))) {
+  die(`${configSource} "exclude" must be an array of strings, additive to the defaults`);
 }
 
-const packPath = path.join(repoRoot, 'brand', `${baseline.pack}.brandpack.json`);
+const packPath = path.join(repoRoot, 'brand', `${config.pack}.brandpack.json`);
 if (!existsSync(packPath)) {
-  console.error(`FAIL: pack mirror missing at ${packPath}`);
-  process.exit(2);
+  die(`pack mirror missing at ${packPath}`, [
+    'The pack is a MIRROR of the canonical pack in the dh-hub vault. Copy it in.'
+  ]);
 }
 
-const scan = scanRepo({ repo: repoRoot, packPath, exclude: [...DEFAULT_EXCLUDE, ...EXTRA_EXCLUDE] });
+const exclude = [...DEFAULT_EXCLUDE, ...EXTRA_EXCLUDE, ...(config.exclude || [])];
 
-if (scan.error) {
-  console.error(`FAIL: ${scan.error}`);
-  process.exit(2);
+// ---------------------------------------------------------------- the scan
+// Positional call, the same exported function vault/core/engine/estate-status.mjs
+// calls in its object form. One scanner, so the CI number and the nightly number
+// cannot be produced by two different pieces of code.
+const scan = scanRepo(repoRoot, packPath, { exclude });
+
+if (scan.error) die(scan.error);
+if (scan.scanned === 0) {
+  die('ZERO files scanned. This is a blind gate, not a clean one — check "exclude".');
 }
 
-console.log(`brand gate — pack ${baseline.pack}  (@andrew22lane/bbe bbe-gate)`);
-console.log(`  repo        ${scan.repo}`);
-console.log(`  scanned     ${scan.scanned} of ${scan.files} files`);
-console.log(`  pack colours ${scan.packColours}`);
-console.log(`  BRAND hits: ${scan.brand.length}  (baseline: ${baseline.brand_count})`);
+const rose = scan.brand.length > config.baseline;
+const fell = scan.brand.length < config.baseline;
+
+if (JSON_OUT) {
+  console.log(JSON.stringify({
+    ok: !rose,
+    tool: `@andrew22lane/bbe ${PKG.version}`,
+    repo: scan.repo,
+    config: configSource,
+    pack: config.pack,
+    exclude,
+    scanned: scan.scanned,
+    files: scan.files,
+    packColours: scan.packColours,
+    brand: scan.brand.length,
+    brandUnique: scan.brandUnique,
+    baseline: config.baseline,
+    unregistered: scan.unregistered.length,
+    unregisteredUnique: scan.unregisteredUnique,
+    hits: scan.brand
+  }, null, 2));
+  process.exit(rose ? 1 : 0);
+}
+
+say(`brand gate — pack ${config.pack}  (@andrew22lane/bbe ${PKG.version} bbe-gate)`);
+say(`  repo         ${scan.repo}`);
+say(`  config       ${path.relative(repoRoot, configSource) || configSource}`);
+say(`  scanned      ${scan.scanned} of ${scan.files} files`);
+say(`  pack colours ${scan.packColours}`);
+if (config.exclude && config.exclude.length) say(`  also excluded ${config.exclude.join(', ')}`);
+say(`  BRAND hits: ${scan.brand.length}  (baseline: ${config.baseline})`);
 for (const b of scan.brand.slice(0, 60)) {
-  console.log(`    ${b.file}:${b.line}  ${b.literal}  -> ${b.packName}`);
+  say(`    ${b.file}:${b.line}  ${b.literal}  -> ${b.packName}`);
 }
-if (scan.brand.length > 60) console.log(`    ...and ${scan.brand.length - 60} more`);
-console.log(`  UNREGISTERED (warn only): ${scan.unregistered.length} hits, ${scan.unregisteredUnique} unique`);
+if (scan.brand.length > 60) say(`    ...and ${scan.brand.length - 60} more`);
+say(`  UNREGISTERED (warn only): ${scan.unregistered.length} hits, ${scan.unregisteredUnique} unique`);
 
-if (scan.brand.length > baseline.brand_count) {
+// ---------------------------------------------------------------- --write-baseline
+if (has('--write-baseline')) {
+  if (configSource !== configPath) {
+    console.error('');
+    console.error(`FAIL: --write-baseline writes ${CONFIG_NAME}, and this repo is still on ${LEGACY_BASELINE}.`);
+    console.error('Migrate first: docs/MIGRATE-GATE.md in andrew22lane/bbe.');
+    process.exit(2);
+  }
+  if (rose) {
+    console.error('');
+    console.error(`FAIL: refusing to RAISE the baseline from ${config.baseline} to ${scan.brand.length}.`);
+    console.error('The ratchet only goes down. A count that rose means a brand fact got typed');
+    console.error('into code — fix that, or edit bbe.config.json by hand and say why in the PR.');
+    process.exit(1);
+  }
+  if (!fell) {
+    console.log('');
+    console.log(`baseline already ${config.baseline}; nothing to write.`);
+    process.exit(0);
+  }
+  const updated = { ...config, baseline: scan.brand.length };
+  writeFileSync(configPath, JSON.stringify(updated, null, 2) + '\n');
   console.log('');
-  console.log(`FAIL: BRAND count rose from ${baseline.brand_count} to ${scan.brand.length}.`);
-  console.log('The baseline ratchets DOWN only — never raise tools/brand-gate-baseline.json by hand.');
+  console.log(`baseline lowered ${config.baseline} -> ${scan.brand.length} in ${CONFIG_NAME}. Commit it in this PR.`);
+  process.exit(0);
+}
+
+if (rose) {
+  console.log('');
+  console.log(`FAIL: BRAND count rose from ${config.baseline} to ${scan.brand.length}.`);
+  console.log(`The baseline ratchets DOWN only — never raise "baseline" in ${CONFIG_NAME} by hand.`);
   process.exit(1);
 }
 
-if (scan.brand.length < baseline.brand_count) {
-  console.log('');
-  console.log(`NOTE: BRAND count fell from ${baseline.brand_count} to ${scan.brand.length}.`);
-  console.log('Lower tools/brand-gate-baseline.json by hand in this PR to lock in the improvement.');
+if (fell) {
+  say('');
+  say(`NOTE: BRAND count fell from ${config.baseline} to ${scan.brand.length}.`);
+  say('Lock it in with `npx bbe-gate --write-baseline` and commit the change in this PR.');
 }
 
-console.log('PASS');
+say('PASS');
 process.exit(0);

@@ -1,0 +1,22 @@
+name: Brand gate (lock #1 — no hardcoded hex)
+
+# Copy this file to .github/workflows/brand-gate.yml in a consumer repo.
+#
+# The gate itself lives in @andrew22lane/bbe. This repo carries no copy of it:
+# no brand-drift.mjs, no brand-gate-check.mjs, no gate-parity.mjs, no baseline
+# JSON. Just bbe.config.json at the root and these eight lines.
+#
+# Pin the tag. Bumping the gate is then one line, and rolling it back is the
+# same line.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  brand-gate:
+    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.2.0

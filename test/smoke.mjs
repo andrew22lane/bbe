@@ -121,8 +121,81 @@ function lane(kind) {
   const m = /BRAND hits: (\d+)/.exec(gate.out);
   check('bbe-gate passes', gate.status === 0, gate.out.trim().split('\n').slice(-1)[0]);
   check('bbe-gate reports zero BRAND hits', !!m && m[1] === '0', m ? `${m[1]} hits` : 'no count in output');
+  check('bbe-gate read bbe.config.json, not a legacy baseline file', /config\s+bbe\.config\.json/.test(gate.out));
+  check('the scaffold wrote no tools/brand-gate-baseline.json', !fs.existsSync(path.join(dir, 'tools', 'brand-gate-baseline.json')));
+  check('the scaffold vendored no gate code', !fs.existsSync(path.join(dir, 'tools', 'brand-drift.mjs')) && !fs.existsSync(path.join(dir, 'tools', 'gate-parity.mjs')));
+
+  const wf = path.join(dir, '.github', 'workflows', 'brand-gate.yml');
+  check('the workflow calls the reusable gate, pinned', fs.existsSync(wf)
+    && new RegExp(`uses: andrew22lane/bbe/\\.github/workflows/bbe-gate\\.yml@v${PKG_VERSION.replace(/\./g, '\\.')}`).test(fs.readFileSync(wf, 'utf8')));
+
+  gateConfigChecks(dir);
 
   return dir;
+}
+
+const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+
+// ---------------------------------------------------------------- the gate's config
+// bbe.config.json is the ONE file that configures the gate. These assert the contract
+// a migrating repo is told to rely on in docs/MIGRATE-GATE.md: the ratchet fails on a
+// rise, --write-baseline only lowers, "exclude" is additive, and a repo still carrying
+// the old tools/brand-gate-baseline.json keeps gating instead of going dark.
+function gateConfigChecks(dir) {
+  const cfgPath = path.join(dir, 'bbe.config.json');
+  const original = fs.readFileSync(cfgPath, 'utf8');
+  const cfg = JSON.parse(original);
+  check('bbe.config.json holds pack, exclude and baseline', cfg.pack === 'fixture' && Array.isArray(cfg.exclude) && cfg.baseline === 0);
+
+  // A planted brand hex must go RED against a baseline of 0.
+  const packColour = JSON.parse(fs.readFileSync(path.join(dir, 'brand', 'fixture.brandpack.json'), 'utf8'));
+  const firstHex = JSON.stringify(packColour).match(/#[0-9a-fA-F]{6}/)[0];
+  fs.mkdirSync(path.join(dir, 'scratch'), { recursive: true });
+  const planted = path.join(dir, 'scratch', 'planted.css');
+  fs.writeFileSync(planted, `.planted{color:${firstHex}}\n`);
+  const red = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('a planted brand hex fails the ratchet', red.status === 1 && /count rose from 0 to 1/.test(red.out));
+
+  // --write-baseline refuses to raise.
+  const refuse = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate'), '--write-baseline'], dir, { allowFail: true });
+  check('--write-baseline refuses to raise the baseline', refuse.status === 1 && /refusing to RAISE/.test(refuse.out));
+  check('and left bbe.config.json alone', fs.readFileSync(cfgPath, 'utf8') === original);
+
+  // "exclude" is additive: name the planted file's directory and the hit disappears,
+  // while every default exclusion is still in force.
+  fs.writeFileSync(cfgPath, JSON.stringify({ ...cfg, exclude: ['scratch'] }, null, 2) + '\n');
+  const excluded = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  check('"exclude" is additive to the defaults', excluded.status === 0 && /BRAND hits: 0/.test(excluded.out));
+  check('and the gate is not blind', !/scanned {6}0 of/.test(excluded.out));
+
+  // Back to a clean tree for the rest.
+  fs.rmSync(path.join(dir, 'scratch'), { recursive: true, force: true });
+
+  // --write-baseline lowers.
+  fs.writeFileSync(cfgPath, JSON.stringify({ ...cfg, baseline: 7 }, null, 2) + '\n');
+  const lower = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate'), '--write-baseline'], dir);
+  check('--write-baseline lowers the baseline', lower.status === 0 && JSON.parse(fs.readFileSync(cfgPath, 'utf8')).baseline === 0);
+
+  // --json is machine-readable and agrees with the human output.
+  fs.writeFileSync(cfgPath, original);
+  const j = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate'), '--json'], dir);
+  let parsed = null;
+  try { parsed = JSON.parse(j.out); } catch {}
+  check('--json parses and reports the same zero', !!parsed && parsed.ok === true && parsed.brand === 0 && parsed.pack === 'fixture');
+  check('--json names the excludes it used', !!parsed && parsed.exclude.includes('tools') && parsed.exclude.includes('node_modules'));
+
+  // Legacy fallback: a repo that has not migrated still gates instead of going dark.
+  fs.rmSync(cfgPath);
+  fs.mkdirSync(path.join(dir, 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'tools', 'brand-gate-baseline.json'), JSON.stringify({ pack: 'fixture', brand_count: 0 }, null, 2));
+  const legacy = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  check('a pre-v1.2.0 repo still gates off tools/brand-gate-baseline.json', legacy.status === 0 && /legacy/.test(legacy.out) && /BRAND hits: 0/.test(legacy.out));
+  fs.rmSync(path.join(dir, 'tools', 'brand-gate-baseline.json'));
+
+  // No config at all is a hard stop, never a silent pass.
+  const noCfg = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('no config at all exits 2, never a silent pass', noCfg.status === 2 && /no bbe\.config\.json/.test(noCfg.out));
+  fs.writeFileSync(cfgPath, original);
 }
 
 log(`bbe new-surface smoke test — @andrew22lane/bbe ${JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version}`);

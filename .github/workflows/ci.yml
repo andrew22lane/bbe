@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -38,6 +40,21 @@ jobs:
         run: |
           node -p "require('./package.json').version"
           node bin/bbe --version
+
+      - name: Consumer template pins this exact version
+        run: |
+          V=$(node -p "require('./package.json').version")
+          grep -q "bbe-gate.yml@v$V" templates/brand-gate.yml
+          echo "templates/brand-gate.yml pins v$V"
+
+      - name: Engine bytes unchanged since v1.0.1
+        run: |
+          git fetch --tags --quiet || true
+          if git rev-parse -q --verify v1.0.1 >/dev/null; then
+            test -z "$(git diff v1.0.1 HEAD -- engine/)" && echo "engine/ byte-identical to v1.0.1"
+          else
+            echo "v1.0.1 tag not fetched in this checkout, skipping"
+          fi
 
       - name: brand-drift selftest
         run: node bin/bbe-gate --selftest
