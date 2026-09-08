@@ -1,0 +1,764 @@
+#!/usr/bin/env node
+// bbe new-surface — scaffold a new BBE surface that is clean BY CONSTRUCTION.
+//
+//   npx @andrew22lane/bbe new-surface --pack gabriella --kind site   --name gab-notes
+//   npx @andrew22lane/bbe new-surface --pack heathers-heroes --kind worker --name hh-thing
+//   bbe-new-surface --pack <slug> --kind site|worker --name <repo-name> [--dir <path>]
+//
+// WHY THIS EXISTS. Every surface in the estate drifted for one reason: a new repo
+// was hand-built by somebody typing CSS. Twenty-one surfaces, twenty-one chances
+// to type a hex, and the drift report on 2026-09-07 counted 406 hits at
+// origin/main. Nothing was enforced at the moment a repo was born, so the gate
+// always arrived after the mess. This is the fix: the first commit of a new
+// surface already reads its brand from a pack, already has the gate in CI with a
+// baseline of zero, and holds no brand fact anywhere in its code.
+//
+// WHAT IT DOES NOT DO. It does not ship the packs. A pack is compiled from live
+// sources and lives in the vault (core/brand-packs/); this tool reads whichever
+// one you name, from --pack-file, or from BBE_PACKS_DIR, or from the vault's
+// default path, and MIRRORS it into the new repo's brand/ with a pack-parity
+// check guarding the mirror. It does not create a GitHub repo, does not push,
+// and does not deploy. It prints the next three commands and stops.
+//
+// Flags:
+//   --pack <slug>        pack slug, e.g. gabriella. Required unless --pack-file.
+//   --kind site|worker   static site on the engine, or a Cloudflare Worker. Required.
+//   --name <repo-name>   the repo / worker name. Required.
+//   --dir <path>         where to write it. Default ~/dh-work/<name>.
+//   --pack-file <path>   read the pack from this exact file instead of a packs dir.
+//   --packs-dir <path>   the directory to find <slug>.brandpack.json in.
+//                        Default $BBE_PACKS_DIR, then ~/dh-work/dh-hub/vault/core/brand-packs.
+//   --engine <spec>      the dependency spec pinned in package.json.
+//                        Default github:andrew22lane/bbe#v<this package's version>.
+//   --force              write into a non-empty directory this tool did not create.
+//
+// Exit 0 written or already current. Exit 1 refused (non-empty dir, bad input).
+// Exit 2 the tool could not read what it needed.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { flattenPalette } from '../engine/lib.mjs';
+import { pickRoles } from '../tools/starter-tokens.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PKG = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'package.json'), 'utf8'));
+const STAMP = '.bbe-new-surface.json';
+
+// ---------------------------------------------------------------- args
+function argOf(flag) {
+  const i = process.argv.indexOf(flag);
+  return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--')
+    ? process.argv[i + 1]
+    : null;
+}
+const has = (f) => process.argv.includes(f);
+
+function usage(code) {
+  console.log(`
+bbe new-surface — scaffold a surface that starts clean by construction.
+
+  bbe-new-surface --pack <slug> --kind site|worker --name <repo-name> [--dir <path>]
+
+  --pack <slug>       pack slug (a file <slug>.brandpack.json in the packs dir)
+  --kind site|worker  static site on the engine, or a Cloudflare Worker
+  --name <repo-name>  repo / worker name
+  --dir <path>        target directory (default ~/dh-work/<name>)
+  --pack-file <path>  exact pack file, instead of a packs dir
+  --packs-dir <path>  packs dir (default $BBE_PACKS_DIR, then the vault path)
+  --engine <spec>     dependency spec (default github:andrew22lane/bbe#v${PKG.version})
+  --force             write into a non-empty directory this tool did not create
+`.trim());
+  process.exit(code);
+}
+if (has('--help') || has('-h') || process.argv.length <= 2) usage(0);
+
+function die(msg, code = 1) { console.error(`FAIL: ${msg}`); process.exit(code); }
+
+const KIND = argOf('--kind');
+const NAME = argOf('--name');
+const PACK_FILE_ARG = argOf('--pack-file');
+let SLUG = argOf('--pack');
+
+if (!KIND) die('--kind is required, and it is site or worker');
+if (KIND !== 'site' && KIND !== 'worker') die(`--kind must be site or worker, got ${JSON.stringify(KIND)}`);
+if (!NAME) die('--name is required (the repo / worker name)');
+if (!/^[a-z0-9][a-z0-9-]*$/.test(NAME)) die(`--name must be a lower-case slug, got ${JSON.stringify(NAME)}`);
+if (!SLUG && !PACK_FILE_ARG) die('--pack <slug> is required (or --pack-file <path>)');
+
+const PACKS_DIR = path.resolve(
+  argOf('--packs-dir') ||
+  process.env.BBE_PACKS_DIR ||
+  path.join(os.homedir(), 'dh-work', 'dh-hub', 'vault', 'core', 'brand-packs')
+);
+
+const PACK_FILE = PACK_FILE_ARG
+  ? path.resolve(PACK_FILE_ARG)
+  : path.join(PACKS_DIR, `${SLUG}.brandpack.json`);
+
+if (!fs.existsSync(PACK_FILE)) {
+  console.error(`FAIL: no pack at ${PACK_FILE}`);
+  if (fs.existsSync(PACKS_DIR)) {
+    const have = fs.readdirSync(PACKS_DIR)
+      .filter((f) => f.endsWith('.brandpack.json'))
+      .map((f) => f.replace('.brandpack.json', ''))
+      .sort();
+    console.error(`  ${PACKS_DIR} carries: ${have.join(', ') || 'none'}`);
+  } else {
+    console.error(`  packs dir does not exist: ${PACKS_DIR}`);
+    console.error('  set BBE_PACKS_DIR, or pass --packs-dir, or pass --pack-file.');
+  }
+  process.exit(2);
+}
+
+const packRaw = fs.readFileSync(PACK_FILE, 'utf8');
+let pack;
+try { pack = JSON.parse(packRaw); } catch (e) { die(`${PACK_FILE} is not valid JSON: ${e.message}`, 2); }
+if (!pack?.outputs?.web) die(`${PACK_FILE} has no outputs.web layer, so there is no web brand to read`, 2);
+if (!pack.outputs.web.palette) die(`${PACK_FILE} has no outputs.web.palette, so there are no colours to wire`, 2);
+
+// The slug the repo will use. --pack-file wins on the filename, then meta.slug.
+if (!SLUG) {
+  SLUG = path.basename(PACK_FILE).replace(/\.brandpack\.json$/, '');
+}
+if (!/^[a-z0-9][a-z0-9-]*$/.test(SLUG)) die(`pack slug must be a lower-case slug, got ${JSON.stringify(SLUG)}`);
+
+const FLAT = flattenPalette(pack.outputs.web.palette);
+const ROLES = pickRoles(FLAT);
+if (!ROLES) die(`${PACK_FILE}: outputs.web.palette holds no plain hex values, so no starter ground/ink can be measured`, 2);
+
+const DIR = path.resolve(argOf('--dir') || path.join(os.homedir(), 'dh-work', NAME));
+const ENGINE_SPEC = argOf('--engine') || `github:andrew22lane/bbe#v${PKG.version}`;
+const BRAND_NAME = pack?.outputs?.web?.identity?.name || pack?.meta?.name || SLUG;
+
+// ---------------------------------------------------------------- templates
+
+function gitignore() {
+  return [
+    'node_modules/',
+    'dist/',
+    'dist-*/',
+    '.wrangler/',
+    '.DS_Store',
+    '',
+    '# Generated from the pack. Never hand-edited, never committed: the pack is',
+    '# the source and `npm run tokens` is how you get this file back.',
+    'src/tokens.generated.js',
+    ''
+  ].join('\n');
+}
+
+function baseline() {
+  return JSON.stringify({
+    pack: SLUG,
+    brand_count: 0,
+    note: `Ratchet, not a target. CI fails only when the BRAND count (bbe-gate, scanned against this repo's own brand/${SLUG}.brandpack.json mirror) rises above this number. Scaffolded by @andrew22lane/bbe ${PKG.version} new-surface at zero, because a surface that starts on the engine and reads every colour from the pack has nothing to count. Lower it never; if it ever needs raising, something typed a brand fact into code and that is the bug, not this file.`
+  }, null, 2) + '\n';
+}
+
+function packParity() {
+  return `#!/usr/bin/env node
+// The pack at brand/${SLUG}.brandpack.json is a MIRROR. The canonical pack lives in
+// the dh-hub vault. This asserts the mirror has not drifted from the canonical one.
+//
+// Usage: node tools/pack-parity.mjs        (PACK=<slug> overrides the slug)
+//
+// On a machine that has the vault checked out, the two files must be byte-identical.
+// On a machine that does not (CI, Cloudflare's builder, a cloud session), there is
+// nothing to compare against and the mirror is trusted, because the mirror is what
+// the build actually reads. Exit 1 only on a real, provable difference.
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+const __dir = path.dirname(fileURLToPath(import.meta.url));
+const SLUG = process.env.PACK || '${SLUG}';
+const MIRROR = path.join(__dir, '..', 'brand', \`\${SLUG}.brandpack.json\`);
+const CANONICAL = process.env.BRANDPACK_CANONICAL
+  || path.join(process.env.BBE_PACKS_DIR || path.join(os.homedir(), 'dh-work', 'dh-hub', 'vault', 'core', 'brand-packs'), \`\${SLUG}.brandpack.json\`);
+
+if (!fs.existsSync(MIRROR)) {
+  console.error(\`FAIL: mirror missing at \${MIRROR}\`);
+  process.exit(1);
+}
+const sha = f => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+
+if (!fs.existsSync(CANONICAL)) {
+  console.log('canonical not on this machine, mirror trusted');
+  console.log(\`  mirror \${MIRROR}\`);
+  console.log(\`  sha256 \${sha(MIRROR)}\`);
+  process.exit(0);
+}
+
+const m = sha(MIRROR), c = sha(CANONICAL);
+if (m === c) {
+  console.log('pack parity OK — mirror matches canonical');
+  console.log(\`  sha256 \${m}\`);
+  process.exit(0);
+}
+
+console.log('PACK PARITY FAILED — the mirror has drifted from the canonical pack');
+console.log(\`  mirror     \${MIRROR}  \${m}\`);
+console.log(\`  canonical  \${CANONICAL}  \${c}\`);
+console.log('');
+console.log('The vault is canonical. Copy it over the mirror, rebuild, and confirm the');
+console.log('output is still what it was before committing:');
+console.log(\`  cp "\${CANONICAL}" "\${MIRROR}"\`);
+process.exit(1);
+`;
+}
+
+function workflow() {
+  const extra = KIND === 'site'
+    ? `
+      - name: build
+        run: npm run build
+`
+    : `
+      - name: tokens (generated from the pack mirror)
+        run: npm run tokens
+
+      - name: worker builds (dry run, no deploy)
+        run: npx wrangler deploy --dry-run
+`;
+  return `name: Brand gate (lock #1 — no hardcoded hex)
+
+# The gate comes from the package, not from a copy of it. Before @andrew22lane/bbe
+# every repo carried its own byte-copy of brand-drift.mjs plus brand-gate-check.mjs
+# plus a gate-parity.mjs whose only job was to prove the copy had not drifted.
+# \`npx bbe-gate\` is that same check, installed. There is nothing here to drift.
+#
+# The RATCHET lives in tools/brand-gate-baseline.json: this job fails only when the
+# BRAND count RISES above the committed number. This repo was scaffolded at zero.
+# Lower it never; it needing a raise means a brand fact got typed into code.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  brand-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: install (pulls the engine package)
+        run: npm install
+
+      - name: brand-drift selftest
+        run: npx bbe-gate --selftest
+
+      - name: brand gate (ratchet against tools/brand-gate-baseline.json)
+        run: npx bbe-gate
+
+      - name: pack parity (mirror vs the vault's canonical pack)
+        env:
+          PACK: ${SLUG}
+        run: node tools/pack-parity.mjs
+${extra}`;
+}
+
+function sitePackageJson() {
+  return JSON.stringify({
+    name: NAME,
+    private: true,
+    version: '0.1.0',
+    type: 'module',
+    description: `${BRAND_NAME} — static site on the BBE engine. Brand facts come from the pack, never from this repo's code.`,
+    scripts: {
+      build: 'OUT=dist node build.mjs',
+      gate: 'bbe-gate',
+      parity: 'node tools/pack-parity.mjs'
+    },
+    dependencies: { '@andrew22lane/bbe': ENGINE_SPEC },
+    engines: { node: '>=20' }
+  }, null, 2) + '\n';
+}
+
+function workerPackageJson() {
+  return JSON.stringify({
+    name: NAME,
+    private: true,
+    version: '0.1.0',
+    type: 'module',
+    description: `${BRAND_NAME} — Cloudflare Worker. Colours come from src/tokens.generated.js, generated from the pack. No brand fact in code.`,
+    scripts: {
+      tokens: 'node tools/build-tokens.mjs',
+      build: 'node tools/build-tokens.mjs',
+      gate: 'bbe-gate',
+      parity: 'node tools/pack-parity.mjs',
+      dev: 'wrangler dev',
+      check: 'npm run tokens && wrangler deploy --dry-run'
+    },
+    dependencies: { '@andrew22lane/bbe': ENGINE_SPEC },
+    devDependencies: { wrangler: '^4.0.0' },
+    engines: { node: '>=20' }
+  }, null, 2) + '\n';
+}
+
+function siteBuild() {
+  return `#!/usr/bin/env node
+// =====================================================================
+// ${NAME} build — one page, on the BBE site engine.
+//
+// THE ONE RULE: this file carries STRUCTURE and never a brand fact. No hex,
+// no font family, no brand pixel constant, no brand name typed by hand.
+// Every colour comes out of brand/${SLUG}.brandpack.json, read through the
+// engine's resolvePack + flattenPalette, and put back into CSS as custom
+// properties by the package's rootCss.
+//
+//   npm run build            -> dist/
+//   OUT=dist-b npm run build -> a second tree, for a byte-identity proof
+// =====================================================================
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { createEngine, resolvePack, flattenPalette, esc } from '@andrew22lane/bbe/engine';
+import { rootCss, pickRoles, cssVarName } from '@andrew22lane/bbe/tools/starter-tokens.mjs';
+
+const __dir = path.dirname(fileURLToPath(import.meta.url));
+const OUT = process.env.OUT || 'dist';
+const BUILD = process.env.BUILD_ID || '1';
+
+// ---- the brand record ----
+const { slug, file, pack } = resolvePack(path.join(__dir, 'brand'), '${SLUG}', fs, path);
+const WEB = pack.outputs.web;
+const C = flattenPalette(WEB.palette);
+const ROLES = pickRoles(C);
+
+const NAME = WEB.identity?.name || pack.meta?.name || slug;
+// A preview host serves the same build from a subdirectory, so both of these are
+// overridable without the pack ever learning about a host it does not own.
+const SITE = (process.env.SITE_ORIGIN || WEB.site?.origin || 'http://localhost:8080').replace(/\\/$/, '');
+const BASE = (process.env.SITE_BASE !== undefined ? process.env.SITE_BASE : (WEB.site?.base || '')).replace(/\\/$/, '');
+
+// ---- CSS: the pack's colours as custom properties, then structure ----
+const CSS = rootCss(C) + fs.readFileSync(path.join(__dir, 'site.css'), 'utf8');
+
+const eng = createEngine({
+  SITE,
+  BASE,
+  BUILD,
+  themeColor: WEB.identity?.themeColor || ROLES.inkValue,
+  ogSiteName: NAME,
+  ogDefault: \`\${SITE}\${BASE}/assets/og-default.png\`,
+  cssHead: () => \`<style>\${CSS}</style>\`
+});
+
+// ---- the page ----
+// A starter page, and it says so. It proves the wiring: every swatch below is a
+// custom property emitted from the pack, so if the pack changes, this page
+// changes and no line of this file moves. Replace the body with the real page.
+const swatches = Object.entries(C)
+  .map(([k, v]) => \`<li><i style="background:var(\${cssVarName(k)})"></i><b>\${esc(k)}</b><code>\${esc(v)}</code></li>\`)
+  .join('');
+
+const body = \`<h1>\${esc(NAME)}</h1>
+<p class="lede">A new surface on the Brand Builder Engine. Nothing in this repo's code
+holds a colour, a font or a name. Every swatch below came out of
+<code>brand/\${esc(slug)}.brandpack.json</code>.</p>
+<ul class="swatches">\${swatches}</ul>
+<p class="note">Placeholder roles, measured by relative luminance and not ruled:
+ground is <b>\${esc(ROLES.ground)}</b>, ink is <b>\${esc(ROLES.ink)}</b>. When the brand
+rules its real roles, point <code>site.css</code> at those custom properties instead.</p>\`;
+
+const html = eng.page({
+  title: NAME,
+  desc: \`\${NAME} — a new surface on the Brand Builder Engine.\`,
+  canonical: eng.abs(''),
+  body,
+  shell: 'bare',
+  bare: { mainAttrs: ' class="wrap"' }
+});
+
+fs.rmSync(OUT, { recursive: true, force: true });
+fs.mkdirSync(OUT, { recursive: true });
+fs.writeFileSync(path.join(OUT, 'index.html'), html);
+console.log(\`[pack] \${path.relative(__dir, file)}  (\${Object.keys(C).length} colours)\`);
+console.log(\`wrote \${OUT}/index.html (\${html.length} bytes)\`);
+`;
+}
+
+function siteCss() {
+  return `/* ${NAME} — structure only. Zero brand facts.
+ *
+ * Every colour on this sheet is var(--bbe-*), and those custom properties are
+ * emitted at build time from the pack by @andrew22lane/bbe rootCss(). Typing a
+ * hex here is the exact thing the gate exists to catch, and the exact thing
+ * that put 406 drift hits across the estate before this scaffold existed.
+ *
+ * --bbe-starter-ground and --bbe-starter-ink are PLACEHOLDERS: the lightest and
+ * darkest colours
+ * in the pack, measured. Swap them for the brand's ruled role properties when
+ * the brand has ruled them. */
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  background:var(--bbe-starter-ground);
+  color:var(--bbe-starter-ink);
+  font:16px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif;
+}
+.wrap{max-width:56rem;margin:0 auto;padding:clamp(1.5rem,5vw,4rem) 1.25rem}
+h1{margin:0 0 .5rem;font-size:clamp(1.9rem,6vw,3rem);line-height:1.1;letter-spacing:-.02em}
+.lede{margin:0 0 2rem;font-size:1.075rem;max-width:44ch}
+.note{margin-top:2rem;font-size:.9rem;opacity:.75;max-width:60ch}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
+
+.swatches{list-style:none;margin:0;padding:0;display:grid;gap:.5rem;
+  grid-template-columns:repeat(auto-fill,minmax(15rem,1fr))}
+.swatches li{display:flex;align-items:center;gap:.6rem;padding:.4rem .55rem;
+  border:1px solid currentColor;border-radius:.3rem;min-width:0}
+.swatches i{flex:0 0 auto;width:1.6rem;height:1.6rem;border-radius:.2rem;
+  border:1px solid currentColor;display:block}
+.swatches b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.swatches code{margin-left:auto;opacity:.7}
+
+@media (prefers-reduced-motion:no-preference){
+  .swatches li{transition:transform .12s ease}
+  .swatches li:hover{transform:translateY(-1px)}
+}
+`;
+}
+
+function workerBuildTokens() {
+  return `#!/usr/bin/env node
+// Emits src/tokens.generated.js from brand/${SLUG}.brandpack.json, by invoking the
+// build-tokens that ships INSIDE @andrew22lane/bbe. This file is a two-line shim on
+// purpose: the generator is the package's, so it cannot drift from the estate's, and
+// this repo only pins which pack and which output path.
+//
+//   npm run tokens
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
+
+const require_ = createRequire(import.meta.url);
+const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+let entry;
+try {
+  entry = require_.resolve('@andrew22lane/bbe/tools/build-tokens.mjs');
+} catch (e) {
+  console.error('FAIL: @andrew22lane/bbe is not installed. Run npm install first.');
+  process.exit(2);
+}
+
+const r = spawnSync(process.execPath, [
+  entry,
+  '--pack', path.join('brand', '${SLUG}.brandpack.json'),
+  '--out', path.join('src', 'tokens.generated.js')
+], { cwd: repoRoot, stdio: 'inherit' });
+
+process.exit(r.status === null ? 1 : r.status);
+`;
+}
+
+function workerIndex() {
+  return `// ${NAME} — one page, served from a Cloudflare Worker.
+//
+// THE ONE RULE: no brand fact in code. Every colour on this page arrives as a
+// CSS custom property out of src/tokens.generated.js, which is generated from
+// brand/${SLUG}.brandpack.json by \`npm run tokens\` and is NOT committed. There is
+// no hex, no font family and no brand name typed below.
+//
+// --bbe-starter-ground and --bbe-starter-ink are PLACEHOLDER roles: the lightest
+// and darkest colours in the pack, measured by relative luminance. Point at the
+// brand's real role properties once the brand has ruled them.
+import { TOKENS_CSS, TOKENS } from './tokens.generated.js';
+// The kebab rule that named those custom properties, from the package, so this
+// file and the generator cannot disagree about what a palette key is called.
+import { cssVarName } from '@andrew22lane/bbe/tools/starter-tokens.mjs';
+
+const STRUCTURE = \`
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bbe-starter-ground);color:var(--bbe-starter-ink);
+  font:16px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif}
+.wrap{max-width:56rem;margin:0 auto;padding:clamp(1.5rem,5vw,4rem) 1.25rem}
+h1{margin:0 0 .5rem;font-size:clamp(1.9rem,6vw,3rem);line-height:1.1;letter-spacing:-.02em}
+p{max-width:60ch}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
+ul{list-style:none;margin:0;padding:0;display:grid;gap:.5rem;
+  grid-template-columns:repeat(auto-fill,minmax(15rem,1fr))}
+li{display:flex;align-items:center;gap:.6rem;padding:.4rem .55rem;
+  border:1px solid currentColor;border-radius:.3rem;min-width:0}
+li i{flex:0 0 auto;width:1.6rem;height:1.6rem;border-radius:.2rem;
+  border:1px solid currentColor;display:block}
+li b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+li code{margin-left:auto;opacity:.7}
+\`;
+
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// The brand's own name, out of the pack. Never typed here.
+const BRAND = TOKENS.identity?.name || '${NAME}';
+
+const swatches = Object.entries(TOKENS.light)
+  .map(([k, v]) => \`<li><i style="background:var(\${cssVarName(k)})"></i><b>\${esc(k)}</b><code>\${esc(v)}</code></li>\`)
+  .join('');
+
+const PAGE = \`<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>\${esc(BRAND)}</title>
+<meta name="robots" content="noindex, nofollow">
+<style>\${TOKENS_CSS}\${STRUCTURE}</style>
+</head><body><main class="wrap">
+<h1>\${esc(BRAND)}</h1>
+<p>A new Worker surface on the Brand Builder Engine. Nothing in <code>src/index.js</code>
+holds a colour: every swatch below is a custom property generated from
+<code>brand/${SLUG}.brandpack.json</code>.</p>
+<ul>\${swatches}</ul>
+<p>Placeholder roles, measured and not ruled: ground is <b>\${esc(TOKENS.roles?.ground)}</b>,
+ink is <b>\${esc(TOKENS.roles?.ink)}</b>.</p>
+</main></body></html>\`;
+
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === '/healthz') {
+      return new Response('ok\\n', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+    }
+    return new Response(PAGE, {
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        // Unlisted until somebody decides this surface is public. Same posture
+        // every other new Worker in the estate starts from.
+        'x-robots-tag': 'noindex, nofollow',
+        'cache-control': 'no-store'
+      }
+    });
+  }
+};
+`;
+}
+
+function wranglerToml() {
+  return `# ${NAME} — scaffolded by @andrew22lane/bbe ${PKG.version} new-surface.
+#
+# NO custom domain, on purpose. A client-facing page belongs on the CLIENT's
+# domain (ruling 2026-08-27), and that needs DNS the client has to grant. Until
+# then this deploys to workers.dev, unlisted and noindexed on every response,
+# which is the posture every other new Worker in the estate starts from.
+#
+# compatibility_date is pinned. Moving it changes runtime behaviour, so it moves
+# in its own commit with its own reason, never as a side effect of another change.
+name = "${NAME}"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+[observability]
+enabled = true
+`;
+}
+
+function readme() {
+  const three = KIND === 'site'
+    ? [
+      ['build', 'npm run build', 'writes dist/index.html'],
+      ['gate', 'npx bbe-gate', 'the brand gate, from the package'],
+      ['bump the engine', `edit "@andrew22lane/bbe" in package.json, then npm install`, 'one line, and a rollback is the same line']
+    ]
+    : [
+      ['build the tokens', 'npm run tokens', 'writes src/tokens.generated.js from the pack'],
+      ['gate', 'npx bbe-gate', 'the brand gate, from the package'],
+      ['bump the engine', `edit "@andrew22lane/bbe" in package.json, then npm install`, 'one line, and a rollback is the same line']
+    ];
+
+  const layoutSite = `\`\`\`
+build.mjs      structure and routes. zero brand facts.
+site.css       structure. every colour is var(--bbe-*).
+brand/         MIRROR of the vault pack. never edited here.
+tools/         pack-parity.mjs, brand-gate-baseline.json
+\`\`\``;
+  const layoutWorker = `\`\`\`
+src/index.js             the page. zero brand facts.
+src/tokens.generated.js  GENERATED from the pack. not committed. not edited.
+brand/                   MIRROR of the vault pack. never edited here.
+tools/                   build-tokens.mjs (a shim), pack-parity.mjs, brand-gate-baseline.json
+wrangler.toml            name, entry, pinned compatibility_date
+\`\`\``;
+
+  return `# ${NAME}
+
+${BRAND_NAME} — ${KIND === 'site' ? 'a static site on the Brand Builder Engine' : 'a Cloudflare Worker on the Brand Builder Engine pack'}.
+
+Scaffolded by \`@andrew22lane/bbe ${PKG.version} new-surface\` on ${new Date().toISOString().slice(0, 10)},
+so it started clean instead of being cleaned later.
+
+## The one rule
+
+**No brand fact in code.** Not a hex, not a font family, not a brand pixel
+constant, not the brand's name typed by hand. Every one of them lives in
+\`brand/${SLUG}.brandpack.json\`, which is a mirror of the canonical pack in the
+dh-hub vault, and the code reads it.
+
+That is not a style preference. Twenty-one surfaces in this estate were each
+hand-built by somebody typing CSS, and on 2026-09-07 the drift report counted 406
+hardcoded brand values across them at \`origin/main\`. Every one of those started as
+one reasonable-looking hex in one file. \`npx bbe-gate\` fails this repo the moment
+the count rises above \`tools/brand-gate-baseline.json\`, which was scaffolded at
+**0**. It runs in CI on every pull request and every push to \`main\`.
+
+To change a colour: edit the pack in the vault, copy it over \`brand/\`, and run
+\`node tools/pack-parity.mjs\` to prove the mirror matches. Never the reverse, and
+never the mirror alone.
+
+## The three commands
+
+| What | Command | Notes |
+|---|---|---|
+${three.map(([w, c, n]) => `| ${w} | \`${c}\` | ${n} |`).join('\n')}
+
+\`npm install\` first, once. It pulls the engine package from its git tag.
+
+## Layout
+
+${KIND === 'site' ? layoutSite : layoutWorker}
+
+${KIND === 'worker' ? `## Deploying
+
+\`npx wrangler deploy --dry-run\` proves it builds. The real \`deploy\` is a human's
+click, never a worker's or an agent's, and \`npm run tokens\` has to have run first
+because \`src/tokens.generated.js\` is not committed.
+
+` : `## Determinism
+
+Two builds of the same commit must be byte-identical:
+
+\`\`\`
+OUT=dist-a node build.mjs && OUT=dist-b node build.mjs
+node node_modules/@andrew22lane/bbe/tools/verify-byte-identity.mjs dist-a dist-b
+\`\`\`
+
+`}## Placeholder roles
+
+The starter page paints with \`--bbe-starter-ground\` and \`--bbe-starter-ink\`, the
+**lightest and darkest colours in the pack, measured by relative luminance**. They
+are placeholders and they are measured, not ruled, so a real page should point at
+the pack's own named custom properties (\`--bbe-<packKey>\`, one per palette colour)
+once the brand has ruled its roles.
+`;
+}
+
+// ---------------------------------------------------------------- the file set
+const files = { [STAMP]: null }; // filled below, stamp last
+
+if (KIND === 'site') {
+  Object.assign(files, {
+    'package.json': sitePackageJson(),
+    'build.mjs': siteBuild(),
+    'site.css': siteCss(),
+    'README.md': readme(),
+    '.gitignore': gitignore(),
+    '.node-version': '20\n',
+    [`brand/${SLUG}.brandpack.json`]: packRaw,
+    'tools/pack-parity.mjs': packParity(),
+    'tools/brand-gate-baseline.json': baseline(),
+    '.github/workflows/brand-gate.yml': workflow()
+  });
+} else {
+  Object.assign(files, {
+    'package.json': workerPackageJson(),
+    'wrangler.toml': wranglerToml(),
+    'src/index.js': workerIndex(),
+    'README.md': readme(),
+    '.gitignore': gitignore(),
+    '.node-version': '20\n',
+    [`brand/${SLUG}.brandpack.json`]: packRaw,
+    'tools/build-tokens.mjs': workerBuildTokens(),
+    'tools/pack-parity.mjs': packParity(),
+    'tools/brand-gate-baseline.json': baseline(),
+    '.github/workflows/brand-gate.yml': workflow()
+  });
+}
+
+files[STAMP] = JSON.stringify({
+  tool: '@andrew22lane/bbe new-surface',
+  toolVersion: PKG.version,
+  name: NAME,
+  kind: KIND,
+  pack: SLUG,
+  packSource: PACK_FILE,
+  engine: ENGINE_SPEC,
+  files: Object.keys(files).filter((f) => f !== STAMP).sort()
+}, null, 2) + '\n';
+
+// ---------------------------------------------------------------- write
+const exists = fs.existsSync(DIR);
+const entries = exists ? fs.readdirSync(DIR).filter((f) => f !== '.git' && f !== '.DS_Store') : [];
+const stampPath = path.join(DIR, STAMP);
+
+if (entries.length && !fs.existsSync(stampPath) && !has('--force')) {
+  console.error(`FAIL: ${DIR} is not empty and was not scaffolded by this tool.`);
+  console.error(`  it holds: ${entries.slice(0, 12).join(', ')}${entries.length > 12 ? ', …' : ''}`);
+  console.error('  pick another --dir, empty this one, or pass --force if you mean it.');
+  process.exit(1);
+}
+
+if (entries.length && fs.existsSync(stampPath)) {
+  let prior;
+  try { prior = JSON.parse(fs.readFileSync(stampPath, 'utf8')); } catch { prior = {}; }
+  const mismatch = ['name', 'kind', 'pack'].filter((k) => prior[k] && prior[k] !== { name: NAME, kind: KIND, pack: SLUG }[k]);
+  if (mismatch.length && !has('--force')) {
+    console.error(`FAIL: ${DIR} was scaffolded as ${prior.kind} "${prior.name}" on pack "${prior.pack}".`);
+    console.error(`  this run asks for ${KIND} "${NAME}" on pack "${SLUG}" — ${mismatch.join(', ')} differ.`);
+    console.error('  pick another --dir, or pass --force to overwrite it.');
+    process.exit(1);
+  }
+}
+
+fs.mkdirSync(DIR, { recursive: true });
+
+const written = [];
+const unchanged = [];
+for (const [rel, content] of Object.entries(files)) {
+  const abs = path.join(DIR, rel);
+  if (fs.existsSync(abs) && fs.readFileSync(abs, 'utf8') === content) { unchanged.push(rel); continue; }
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, content);
+  written.push(rel);
+}
+// The two shims are run directly often enough to be worth the bit.
+for (const rel of ['build.mjs', 'tools/build-tokens.mjs', 'tools/pack-parity.mjs']) {
+  const abs = path.join(DIR, rel);
+  if (fs.existsSync(abs)) { try { fs.chmodSync(abs, 0o755); } catch { /* not fatal */ } }
+}
+
+// ---------------------------------------------------------------- report
+console.log('');
+console.log(`${KIND} surface "${NAME}" on pack "${SLUG}" (${BRAND_NAME})`);
+console.log(`  dir     ${DIR}`);
+console.log(`  pack    ${PACK_FILE}`);
+console.log(`  engine  ${ENGINE_SPEC}`);
+console.log(`  colours ${Object.keys(FLAT).length}; starter ground=${ROLES.ground}, ink=${ROLES.ink}`);
+console.log('');
+if (written.length) {
+  console.log(`  wrote ${written.length}:`);
+  for (const f of written.sort()) console.log(`    ${f}`);
+}
+if (unchanged.length) console.log(`  unchanged ${unchanged.length}${written.length ? '' : ' — already current, nothing to do'}`);
+
+const next = KIND === 'site'
+  ? ['npm install', 'npm run build', 'npx bbe-gate']
+  : ['npm install', 'npm run tokens', 'npx bbe-gate'];
+console.log('');
+console.log('Next three commands:');
+console.log(`  cd ${DIR}`);
+for (const c of next) console.log(`  ${c}`);
+console.log('');
+console.log('Then: git init, gh repo create, push. The gate workflow runs itself from there.');
+process.exit(0);

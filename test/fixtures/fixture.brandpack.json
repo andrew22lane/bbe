@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "slug": "fixture",
+    "name": "Fixture Brand",
+    "_why": "A FAKE brand, and the only pack this repo ships. It exists so CI can scaffold a real surface and gate it without the private dh-hub vault, which no runner can see. Every value here is invented; nothing in it belongs to a client. Never use it for anything but the smoke test, and never copy it as the shape of a real pack — a real pack is compiled from live sources with 29 graded capabilities (core/brand-packs/NEW-BRAND-RUNBOOK.md)."
+  },
+  "tokens": {
+    "color": {
+      "brandOnly": { "value": "#4A2E8F", "role": "a BRAND-layer colour outputs.web does not carry, so the smoke test covers TOKENS.brand too" }
+    }
+  },
+  "outputs": {
+    "web": {
+      "palette": {
+        "_note": "Invented values. Six colours is enough to exercise the flattener, the nested group and the luminance measurement.",
+        "field": { "value": "#F4F1EA", "role": "the lightest value, so the measured starter ground resolves here" },
+        "panel": { "value": "#E4DDCE", "role": "a second light tone" },
+        "mark": { "value": "#2F6F62", "role": "the primary" },
+        "markLift": { "value": "#3D8A79", "role": "the primary, lifted" },
+        "shadow": {
+          "deep": { "value": "#14231F", "role": "the darkest value, so the measured starter ink resolves here. Nested on purpose: this exercises flattenPalette's camelCase join." },
+          "mid": { "value": "#2A3C36", "role": "a mid depth" }
+        }
+      },
+      "fonts": { "_note": "Deliberately empty. The scaffold reads no font, so an empty fonts key must not break it." },
+      "identity": {
+        "name": "Fixture Brand",
+        "themeColor": "#2F6F62"
+      },
+      "site": {
+        "origin": "https://fixture.invalid",
+        "base": ""
+      }
+    }
+  }
+}

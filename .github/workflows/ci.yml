@@ -1,0 +1,46 @@
+name: ci
+
+# The package's own gate. It runs on every pull request and every push to main,
+# because the one thing `bbe new-surface` promises is that a repo it writes starts
+# at ZERO drift and stays buildable, and the only honest way to check that promise
+# is to scaffold a surface end to end and read the gate's own number.
+#
+# The smoke test scaffolds from test/fixtures/fixture.brandpack.json, an invented
+# brand, because a runner cannot see the private dh-hub vault the real packs live
+# in. It installs this checkout into each scaffolded repo (file: dependency), so it
+# tests the code in the PR and not whatever tag happens to be published.
+#
+# Nothing here deploys. The worker lane stops at `wrangler deploy --dry-run`.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Syntax check every shipped file
+        run: |
+          for f in engine/lib.mjs tools/*.mjs test/*.mjs bin/*; do node --check "$f"; done
+
+      - name: Version and tag discipline
+        run: |
+          node -p "require('./package.json').version"
+          node bin/bbe --version
+
+      - name: brand-drift selftest
+        run: node bin/bbe-gate --selftest
+
+      - name: new-surface smoke test (site + worker, scaffold to gate)
+        run: node test/smoke.mjs

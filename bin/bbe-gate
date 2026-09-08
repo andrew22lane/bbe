@@ -1,0 +1,116 @@
+#!/usr/bin/env node
+// bbe-gate — the brand gate a consumer repo runs, from the package, not from a
+// vendored copy of it.
+//
+//   npx bbe-gate               scan the current repo, ratchet against the baseline
+//   npx bbe-gate --selftest    plant a defect in a fixture, assert the scanner goes RED
+//   npx bbe-gate --repo <dir>  scan somewhere other than the cwd
+//
+// Exit 0 clean or improved. Exit 1 the BRAND count rose above the baseline.
+// Exit 2 the gate could not run (no baseline, no pack mirror, bad input).
+//
+// WHY THIS EXISTS. Before the package, every repo carried its own byte-copy of
+// brand-drift.mjs plus its own brand-gate-check.mjs plus a gate-parity.mjs whose
+// only job was to prove the copy had not drifted. Three files and a whole class
+// of drift, to run one check. This is that check, installed instead of copied,
+// so the parity file has nothing left to guard.
+//
+// The RATCHET is the same contract those copies carried, deliberately unchanged:
+// the job fails only when the BRAND count RISES above tools/brand-gate-baseline.json.
+// A baseline is lowered by hand in the PR that cleans the hits. It is never raised
+// by hand to silence a regression. A gate that goes red on routine work gets
+// switched off, and then it protects nothing.
+//
+// EXCLUSIONS on top of brand-drift's own defaults (node_modules, dist, dot-paths,
+// *.brandpack.json, generated files that name their pack): `tools`. The tools
+// directory holds the gate's own fixtures and the token builder, which quote
+// colours as test data and as pack plumbing, not as page paint.
+
+import { readFileSync, existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { scanRepo, DEFAULT_EXCLUDE } from '../tools/brand-drift.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const DRIFT = path.join(HERE, '..', 'tools', 'brand-drift.mjs');
+
+// Excluded on top of brand-drift's defaults. Kept here, in one place, so every
+// repo the scaffold creates gates on the same footprint.
+const EXTRA_EXCLUDE = ['tools'];
+
+function argOf(flag) {
+  const i = process.argv.indexOf(flag);
+  return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : null;
+}
+const has = (flag) => process.argv.includes(flag);
+
+if (has('--help') || has('-h')) {
+  console.log('usage: bbe-gate [--repo <dir>] [--selftest]');
+  process.exit(0);
+}
+
+// The selftest is brand-drift's own: it plants a known hex in a fixture repo and
+// asserts the scanner reports it. Delegated rather than reimplemented.
+if (has('--selftest')) {
+  const r = spawnSync(process.execPath, [DRIFT, '--selftest'], { stdio: 'inherit' });
+  process.exit(r.status === null ? 2 : r.status);
+}
+
+const repoRoot = path.resolve(argOf('--repo') || process.cwd());
+const baselinePath = path.join(repoRoot, 'tools', 'brand-gate-baseline.json');
+
+if (!existsSync(baselinePath)) {
+  console.error(`FAIL: baseline missing at ${baselinePath}`);
+  console.error('A repo on the gate carries tools/brand-gate-baseline.json holding {"pack","brand_count"}.');
+  process.exit(2);
+}
+
+let baseline;
+try { baseline = JSON.parse(readFileSync(baselinePath, 'utf8')); }
+catch (e) { console.error(`FAIL: ${baselinePath} is not valid JSON: ${e.message}`); process.exit(2); }
+
+if (!baseline.pack || typeof baseline.brand_count !== 'number') {
+  console.error(`FAIL: ${baselinePath} needs a "pack" slug and a numeric "brand_count"`);
+  process.exit(2);
+}
+
+const packPath = path.join(repoRoot, 'brand', `${baseline.pack}.brandpack.json`);
+if (!existsSync(packPath)) {
+  console.error(`FAIL: pack mirror missing at ${packPath}`);
+  process.exit(2);
+}
+
+const scan = scanRepo({ repo: repoRoot, packPath, exclude: [...DEFAULT_EXCLUDE, ...EXTRA_EXCLUDE] });
+
+if (scan.error) {
+  console.error(`FAIL: ${scan.error}`);
+  process.exit(2);
+}
+
+console.log(`brand gate — pack ${baseline.pack}  (@andrew22lane/bbe bbe-gate)`);
+console.log(`  repo        ${scan.repo}`);
+console.log(`  scanned     ${scan.scanned} of ${scan.files} files`);
+console.log(`  pack colours ${scan.packColours}`);
+console.log(`  BRAND hits: ${scan.brand.length}  (baseline: ${baseline.brand_count})`);
+for (const b of scan.brand.slice(0, 60)) {
+  console.log(`    ${b.file}:${b.line}  ${b.literal}  -> ${b.packName}`);
+}
+if (scan.brand.length > 60) console.log(`    ...and ${scan.brand.length - 60} more`);
+console.log(`  UNREGISTERED (warn only): ${scan.unregistered.length} hits, ${scan.unregisteredUnique} unique`);
+
+if (scan.brand.length > baseline.brand_count) {
+  console.log('');
+  console.log(`FAIL: BRAND count rose from ${baseline.brand_count} to ${scan.brand.length}.`);
+  console.log('The baseline ratchets DOWN only — never raise tools/brand-gate-baseline.json by hand.');
+  process.exit(1);
+}
+
+if (scan.brand.length < baseline.brand_count) {
+  console.log('');
+  console.log(`NOTE: BRAND count fell from ${baseline.brand_count} to ${scan.brand.length}.`);
+  console.log('Lower tools/brand-gate-baseline.json by hand in this PR to lock in the improvement.');
+}
+
+console.log('PASS');
+process.exit(0);
