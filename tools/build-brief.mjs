@@ -458,7 +458,16 @@ function buildLaw(ctx) {
     for (const [name, c] of Object.entries(conflicts.value)) {
       if (name === '_why') continue;
       md.push('');
-      md.push(`- **${name}** — resolved as: \`${c.resolved || 'unresolved'}\``);
+      // `resolved` says which value SHIPS today. `state` says whether anyone CHOSE it.
+      // They were indistinguishable until pack 2.2.1, so a working default read as a ruling.
+      // A pack with no `state` predates the field: badge it UNKNOWN rather than guessing RULED.
+      const state = c.state || (c.ruledBy ? 'RULED' : 'UNKNOWN');
+      const badge = state === 'RULED'
+        ? `**RULED** by ${c.ruledBy || 'unknown'}${c.ruledAt ? ` on ${c.ruledAt}` : ''}`
+        : state === 'OPEN'
+          ? '**OPEN — nobody has ruled this**'
+          : '_state not declared (pack predates the field)_';
+      md.push(`- **${name}** — ${badge} · ships today: \`${c.resolved || 'unresolved'}\``);
       for (const [k, v] of Object.entries(c)) {
         if (k === 'resolved') continue;
         md.push(`  - ${k}: ${truncate(v, 300)}`);
