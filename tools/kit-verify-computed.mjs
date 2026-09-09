@@ -321,7 +321,7 @@ const CONTRAST_FN = `
   }
 `;
 
-async function measureScheme(page, url, themeAttr = null) {
+async function measureScheme(page, url, themeAttr = null, discArrow = []) {
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
   await page.evaluate((t) => {
     if (t) document.documentElement.setAttribute('data-theme', t);
@@ -330,7 +330,7 @@ async function measureScheme(page, url, themeAttr = null) {
   await page.evaluate(async () => { try { await document.fonts.ready; } catch (e) {} });
   await page.evaluate(() => { for (const a of document.getAnimations()) { try { a.pause(); a.currentTime = 0; } catch (e) {} } });
 
-  return page.evaluate(new Function('CONTRAST_SRC', `
+  return page.evaluate(new Function('PAIRS', `
     ${CONTRAST_FN}
     const root = getComputedStyle(document.documentElement);
     const tokens = {};
@@ -408,8 +408,29 @@ async function measureScheme(page, url, themeAttr = null) {
       };
     })() : null;
 
-    return { tokens, pairs, onInk, page: hex(pageGround.color) };
-  `), null);
+    // ---- RULING 69: the disc/arrow law, measured in the browser ------------
+    //
+    // The emitter measures the same pairs off the emitted values. This is the
+    // SECOND, independent instrument: the real cascade, in a real engine, at the
+    // real OS preference. Two measurements from two sources or it does not count.
+    const discArrow = (PAIRS || []).map((p) => {
+      const disc = document.querySelector(p.discSel);
+      const arrow = disc ? disc.querySelector('svg') : null;
+      if (!disc || !arrow) return { ...p, found: false };
+      const dg = ground(disc);
+      const st = parseC(getComputedStyle(arrow).stroke);
+      if (!dg.color || !st) return { ...p, found: false };
+      return {
+        ...p, found: true,
+        disc: hex(dg.color),
+        arrow: hex(over(st, dg.color)),
+        same: hex(over(st, dg.color)) === hex(dg.color),
+        ratio: Math.round(ratio(over(st, dg.color), dg.color) * 100) / 100
+      };
+    });
+
+    return { tokens, pairs, onInk, discArrow, page: hex(pageGround.color) };
+  `), discArrow);
 }
 
 
@@ -571,6 +592,27 @@ function darkReport({ LIGHT, CELLS, model, remap, scheme }) {
     out.push('     what those values are and where the kit uses them. Andrew rules it before this ships.');
   }
 
+  // ---- 3b. THE DISC/ARROW LAW, measured in the browser ----------------------
+  //
+  // RULING 69: an arrow's colour follows its DISC, never the page. The emitter
+  // measures this off its own values; this measures it again in a real engine at
+  // a real OS preference, which is the only instrument that can see the cascade.
+  // Asserted, not merely printed: the ghost-on-ink pair was 1:1 before the fix.
+  let lawOk = true;
+  const law = DARK.discArrow || [];
+  if (law.length) {
+    out.push('', '  3b. THE DISC/ARROW LAW — each disc and ITS arrow, on the dark render');
+    const rows = law.map((p) => {
+      const bad = !p.found || p.same || p.ratio < 3;
+      if (bad) { ok = false; lawOk = false; }
+      return [p.name, p.discSel, p.found ? p.disc : '(not found)', p.found ? p.arrow : '—',
+        p.found ? `${p.ratio}:1` : '—',
+        !p.found ? 'THE HARNESS HAS NO SUCH ELEMENT' : p.same ? 'SAME COLOUR — the arrow vanished into its disc' : p.ratio < 3 ? 'FAIL, under 3:1' : 'differ, clears 3:1'];
+    });
+    out.push(col(['variant', 'disc selector', 'disc', 'arrow', 'ratio', 'verdict'], [22, 30, 10, 10, 9, 44], rows));
+    out.push(`     ${lawOk ? 'PASS — every disc and its arrow differ and clear 3:1 in dark.' : 'FAIL — a disc and its arrow do not read against each other in dark.'}`);
+  }
+
   // ---- 4. the open question, measured --------------------------------------
   out.push('', '  4. .on-ink ON A DARK PAGE — the open question at outputs.web.dark.openQuestion');
   const rowsOI = [];
@@ -594,6 +636,7 @@ function darkReport({ LIGHT, CELLS, model, remap, scheme }) {
   out.push(`  LEVEL 2 DARK — CONTRAST: ${newFails.length
     ? `${newFails.length} pair(s) NEW IN DARK fail WCAG AA. UNRULED DESIGN FINDING, not an emitter fault.`
     : 'no new WCAG AA failure in dark.'}`);
+  out.push(`  LEVEL 2 DARK — DISC/ARROW: ${law.length ? (lawOk ? `PASS, all ${law.length} pair(s) differ and clear 3:1` : 'FAIL, an arrow does not read on its own disc') : 'not measured — the emitter passed no pairs.'}`);
   out.push(`  LEVEL 2 DARK — .on-ink: ${DARK.onInk ? (DARK.onInk.separates ? 'still separates from the page ground.' : `computes to the SAME colour as the page ground (${DARK.onInk.ground}), 1:1. UNRULED, measured only.`) : 'not measured.'}`);
   return { ok, report: out.join('\n'), fails, newFails, onInk: DARK.onInk };
 }
@@ -620,7 +663,7 @@ function col(heads, widths, rows) {
   return lines.join('\n');
 }
 
-export async function run({ emittedCss, targetCss, schemeCss = null, model, scheme = 'light', remap = null }) {
+export async function run({ emittedCss, targetCss, schemeCss = null, model, scheme = 'light', remap = null, discArrow = [] }) {
   let puppeteer;
   try {
     puppeteer = (await import('puppeteer')).default;
@@ -661,13 +704,13 @@ export async function run({ emittedCss, targetCss, schemeCss = null, model, sche
       // already failing" is a claim about the live stylesheet rather than about
       // our own output. (The comparison above has just proved the two render
       // identically in light, so this costs a page load and buys honesty.)
-      LIGHT = await measureScheme(page, `http://127.0.0.1:${port}/target.html`);
+      LIGHT = await measureScheme(page, `http://127.0.0.1:${port}/target.html`, null, discArrow);
 
       // Then drive the whole matrix on the file this run actually emits.
       CELLS = [];
       for (const cell of schemeMatrix(scheme)) {
         await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: cell.os }]);
-        CELLS.push({ ...cell, m: await measureScheme(page, `http://127.0.0.1:${port}/scheme.html`, cell.attr) });
+        CELLS.push({ ...cell, m: await measureScheme(page, `http://127.0.0.1:${port}/scheme.html`, cell.attr, discArrow) });
       }
       await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
     }

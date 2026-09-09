@@ -88,6 +88,80 @@ number refuses the run rather than shipping a colour nobody ruled on.
 grouping instead of inventing a second one — which is also why the delta below
 can only ever be an insertion.
 
+## The split (ruling 69) and the disc/arrow law
+
+Andrew, 2026-09-09: **split `--paper`**. The page-ground token was doing two jobs
+— the page ground AND the foreground on every dark surface — so flipping it for
+dark inverted every foreground declaration at once. The dark Level 2 measured the
+damage before it shipped: 34 of 86 pairs failing WCAG AA, all one cause.
+
+`outputs.web.dark.split` names the second token. `--paper` keeps the ground job
+and flips; `--on-dark` takes the foreground job and does **not** flip, so it is
+`#FBF7F9` in both schemes.
+
+The emitter decides which declaration does which job by **reading its own output**,
+not from a list of selectors that would go stale:
+
+| job | what it looks like | what happens in dark |
+|---|---|---|
+| foreground | `color`, `stroke`, or a component's own foreground custom property, valued exactly at the ground token | takes `--on-dark` |
+| ground | a `background` or a `border` painted with the same token | keeps the token and flips |
+
+### AN ARROW'S COLOUR FOLLOWS ITS DISC, NEVER THE PAGE
+
+This is the part that is not obvious, and Andrew caught it by eye on the first
+fix: every arrow had been sent to `--on-dark` because the PAGE was dark, so the
+arrow on a disc that had **kept** its light value came out white on white.
+
+A disc is not a page. So a disc painted with the ground token keeps the light
+value too, and then each arrow is **measured against its own disc** in the dark
+scheme and moved only when it does not clear 3:1 there. Nothing in the emitter
+names a button variant; the law does it by measurement, and it reproduces all
+three ruled pairs plus a fourth the ruling did not name:
+
+| variant | disc in dark | arrow in dark | ratio |
+|---|---|---|---|
+| plum pill `.btn` | keeps light | the accent, held | 6.69:1 |
+| paper button `.btn.paper` | the accent | **moves** to `--on-dark` | 6.69:1 |
+| ghost off ink `.btn.ghost` | its disc is the body token, so it flips on its own | flips with it, no override | 19.74:1 |
+| ghost on ink `.on-ink .btn.ghost` | keeps light | stays the ink | 19.74:1 |
+
+An arrow whose disc is the hover gradient carries **no number** rather than a
+guessed one. It takes `--on-dark` because every stop of that gradient is a dark
+accent, and the report says so.
+
+### Ruling 68: accent TYPE on a dark ground
+
+Measured on ink, the accent is 2.95:1 and fails. So on a dark ground accent TYPE
+takes the on-ink meta value instead. This does **not** touch the button, which
+stays the accent in both themes (ruling 65) — the button carries the accent as a
+BACKGROUND, and only `color` declarations on selectors a module registered with
+`m.accentType.push(...)` move. Registering at the point of emission is what keeps
+the list from drifting away from the CSS.
+
+### Where the overrides are emitted, and why
+
+Inside the scheme blocks, **never in the light `:root`**. Declaring `--on-dark` in
+the light `:root` would add one declaration to a block that has to stay identical
+to the reference kit, which moves half 1 of the proof. Emitting it inside the dark
+blocks gives exactly the ruled behaviour — the foreground resolves to `#FBF7F9` in
+both schemes, because in light those declarations still read the ground token,
+which is `#FBF7F9` — and adds nothing to the light file.
+
+Two mechanics, both load-bearing, the first taught by Level 2:
+
+- **`:where()`.** A plain `:root[data-theme="dark"] .btn .circ` adds (0,2,0) of
+  specificity, so it stops losing to `.btn.paper .circ` — which is the entire
+  reason the paper button's plum disc exists. Level 2 caught it at once: the
+  paper disc measured white. `:where()` contributes zero specificity, so every
+  override keeps the rank its own rule had.
+- **They ship last**, in the source order of the rules they override. With no
+  specificity to win on, order is the only lever, so an override beats its own
+  rule and nothing else.
+
+`--scheme dark` scopes the same overrides to `:root:not([data-theme="light"])`, so
+a reader who explicitly chooses light gets the light rules back.
+
 ## THE PROOF IS SPLIT, and stays split
 
 A proof that changes two things at once proves neither. So:
@@ -102,8 +176,11 @@ A proof that changes two things at once proves neither. So:
   token must be one the remap names.
 
 `--selftest` grows a scheme half: the shape each legal value emits, four planted
-defects the emitter must REFUSE rather than emit, and three mangles that must make
-the delta prover itself go red.
+defects the emitter must REFUSE rather than emit, three mangles that must make the
+delta prover itself go red, and — for ruling 69 — **an arrow planted so it follows
+its PAGE instead of its disc**, which must collapse three pairs to 1:1 and make the
+law verifier go red. That defect is the exact mistake Andrew caught by eye, so the
+check that catches it is the one worth testing.
 
 ## Level 2 in dark
 
@@ -122,6 +199,11 @@ apply. The dark rendering is therefore measured on its own terms, with
    the **reference** kit, so "pre-existing" is a claim about the live stylesheet.
    A failure here is a design finding, not an emitter fault, and it is printed
    loudly rather than swallowed.
+3b. **The disc/arrow law, measured again.** The emitter measures the same pairs
+   off its own values; this measures them in a real engine at a real OS
+   preference, which is the only instrument that can see the cascade. Asserted,
+   not merely printed: the ghost-on-ink pair was 1:1 before the split, and a pair
+   that cannot be resolved counts as a failure, never as a quiet pass.
 4. **`.on-ink` on a dark page**, the open question the pack records at
    `outputs.web.dark.openQuestion`. Measured and printed. Not answered: the pack
    names Andrew as who rules it.

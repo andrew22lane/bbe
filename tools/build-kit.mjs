@@ -233,6 +233,11 @@ export function makeModel(pack) {
 
   return {
     pack, web, caps, gaps, palette, roles, ladder, onInk, inkClass,
+    // Ruling 68 names three jobs where the accent is TYPE: an eyebrow, the <b>
+    // word in a headline, an accent stroke on ink. A module registers the
+    // selector as it emits it, so the split pass never has to pattern-match a
+    // class name and the list cannot drift from the CSS.
+    accentType: [],
     R, L, OI, F, S, W, RAD, E, D, SP, HEX,
     fams, weights, scale, track, lh, wrap, radius, motion, shadow, button,
     container, order, space,
@@ -525,24 +530,406 @@ function remapOnto(lines, remap, side) {
 
 // The blocks that follow :root. Empty for "light" — that is the whole point of
 // the split proof: nothing is added, so nothing can have changed.
-function emitSchemeBlocks(lines, scheme, remap) {
+//
+// RULING 69 rides in here rather than in :root. The foreground token and every
+// declaration that takes it are emitted INSIDE these blocks, scoped to the same
+// root selector as the token block they accompany. Two consequences, both
+// deliberate: the light emission is untouched, so half 1 of the proof does not
+// move; and a scoped override always outranks the component rule it corrects, so
+// order in the file never matters.
+const SCOPE_DARK_IMPLICIT = ':root:not([data-theme="light"])';
+const SCOPE_DARK_EXPLICIT = ':root[data-theme="dark"]';
+
+function onDarkLine(plan, indent) {
+  return `${indent}${plan.token}:${plan.value};   /* ruling 69: the foreground on any dark surface. It does NOT flip. */`;
+}
+
+// THE OVERRIDES ARE SCOPED WITH :where(), AND THEY SHIP LAST. Both halves of that
+// are load-bearing and the browser taught me the first one:
+//
+//   A plain `:root[data-theme="dark"] .btn .circ` adds (0,2,0) of specificity, so
+//   it stops LOSING to `.btn.paper .circ`, which is the whole reason the paper
+//   button's plum disc exists. Level 2 caught it immediately — the paper disc
+//   measured white. `:where(...)` contributes ZERO specificity, so every override
+//   keeps exactly the rank its own rule had and the cascade is untouched.
+//
+//   With no specificity to win on, ORDER is the only lever left, so the overrides
+//   are emitted after every component rule, in the source order of the rules they
+//   override. Same rank, later in the file: the override wins over its own rule
+//   and over nothing else.
+const scopeWhere = (scope) => `:where(${scope})`;
+
+function overrideRules(plan, scope, indent) {
+  const grouped = new Map();
+  for (const o of [...plan.overrides].sort((a, b) => a.srcIndex - b.srcIndex)) {
+    if (!grouped.has(o.selector)) grouped.set(o.selector, []);
+    grouped.get(o.selector).push(o);
+  }
+  const out = [];
+  for (const [selector, list] of grouped) {
+    const sel = selList(selector).map((s) => `${scopeWhere(scope)} ${s}`).join(',');
+    out.push(`${indent}${sel}{${list.map((o) => `${o.prop}:${o.to}`).join(';')}}`);
+  }
+  return out;
+}
+
+const SPLIT_NOTE = "/* RULING 69 — the split. --on-dark carries the foreground job; an arrow's colour follows its DISC, never the page. */";
+const SPLIT_NOTE_2 = '/* :where() so every override keeps the specificity its own rule had, and last so it wins on order alone */';
+
+// The token blocks, which sit at the top with :root.
+function emitSchemeBlocks(lines, scheme, remap, plan) {
   if (scheme === 'light') return [];
+  const tokenTail = (indent) => (plan ? [onDarkLine(plan, indent)] : []);
   if (scheme === 'dark') {
-    return ['', EXPLICIT_NOTE, ':root[data-theme="light"]{', renderLines(remapLines(lines, remap, 'light'), '  '), '}'];
+    const out = ['', EXPLICIT_NOTE, ':root[data-theme="light"]{', renderLines(remapLines(lines, remap, 'light'), '  '), '}'];
+    if (plan) out.push(`${SCOPE_DARK_IMPLICIT}{`, ...tokenTail('  '), '}');
+    return out;
   }
   return [
     '',
     MEDIA_NOTE,
     '@media (prefers-color-scheme: dark){',
-    '  :root:not([data-theme="light"]){',
+    `  ${SCOPE_DARK_IMPLICIT}{`,
     renderLines(remapLines(lines, remap, 'dark'), '    '),
+    ...tokenTail('    '),
     '  }',
     '}',
     EXPLICIT_NOTE,
-    ':root[data-theme="dark"]{',
+    `${SCOPE_DARK_EXPLICIT}{`,
     renderLines(remapLines(lines, remap, 'dark'), '  '),
+    ...tokenTail('  '),
     '}'
   ];
+}
+
+// The component overrides, which ship at the very end of the file.
+function emitSplitBlocks(scheme, plan) {
+  if (scheme === 'light' || !plan || !plan.overrides.length) return [];
+  const out = ['', SPLIT_NOTE, SPLIT_NOTE_2];
+  if (scheme === 'dark') {
+    out.push(...overrideRules(plan, SCOPE_DARK_IMPLICIT, ''));
+    return out;
+  }
+  out.push(
+    '@media (prefers-color-scheme: dark){',
+    ...overrideRules(plan, SCOPE_DARK_IMPLICIT, '  '),
+    '}',
+    ...overrideRules(plan, SCOPE_DARK_EXPLICIT, '')
+  );
+  return out;
+}
+
+// ---------------------------------------------------------------- THE SPLIT (ruling 69)
+//
+// RULING 69 (Andrew, 2026-09-09): the page-ground token does TWO jobs. It is the
+// page ground AND the foreground on every dark surface. Flipping it for dark
+// inverts every foreground declaration at once, which is exactly what the dark
+// Level 2 caught before this shipped: 34 of 86 pairs failing AA, all one cause.
+//
+// The jobs are split by JOB, read off the emitted CSS itself rather than off a
+// hand-kept list of selectors that would go stale the first time a module moves:
+//
+//   FOREGROUND  a `color`, a `stroke`, or a component's own foreground custom
+//               property whose value is EXACTLY the page-ground token. In a dark
+//               scheme these take outputs.web.dark.split.foreground.token, which
+//               does not flip.
+//   GROUND      a background or a border painted with the same token. It keeps
+//               the token and flips with it. The page ground, the paper button's
+//               own surface and the ring around an overlapping face are all
+//               grounds, and all of them are meant to go dark.
+//
+// AND THEN THE DISC/ARROW LAW, which is the part that is not obvious:
+//
+//   AN ARROW'S COLOUR FOLLOWS ITS DISC, NEVER THE PAGE.
+//
+// Andrew caught this by eye on the first fix: every arrow had been sent to the
+// foreground token because the PAGE was dark, so the arrow sitting on a disc
+// that had KEPT its light value came out white on white. A disc is not a page.
+// So a disc painted with the page-ground token keeps the light value too, and
+// then each arrow is MEASURED against its own disc in the dark scheme and moved
+// only when it does not clear 3:1 there. That reproduces all three ruled pairs
+// without the emitter naming any of them:
+//
+//   plum pill      disc keeps light      arrow stays the accent   6.7:1
+//   ghost on ink   disc keeps light      arrow stays the ink      19.7:1
+//   paper button   disc is the accent    arrow MOVES              2.2:1 -> 6.7:1
+//
+// plus a fourth the ruling did not name: the ghost button off ink, whose disc is
+// painted with the body-text token and so flips on its own. Its arrow flips with
+// it and needs no override at all. The law gets that right by measuring.
+//
+// Every override is emitted INSIDE the scheme blocks, scoped to the same root
+// selector as the token block it accompanies. Nothing lands in the light
+// emission, which is why half 1 of the proof does not move.
+
+const CONTRAST_MIN = 3; // a disc/arrow pair is a graphic, so WCAG asks 3, not 4.5
+
+const RGBof = (v) => {
+  const s = String(v).trim();
+  const mm = s.match(/rgba?\(([^)]+)\)/);
+  if (mm) { const p = mm[1].split(',').map(Number); return [p[0], p[1], p[2]]; }
+  return rgbOf(s);
+};
+const LUMof = (rgb) => {
+  const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+};
+export function contrastOf(a, b) {
+  const A = RGBof(a), B = RGBof(b);
+  if (!A || !B || A.some(isNaN) || B.some(isNaN)) return null;
+  const L1 = LUMof(A), L2 = LUMof(B);
+  return Math.round(((Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05)) * 100) / 100;
+}
+
+// value -> literal, on either side of the scheme. `extra` carries tokens that
+// exist only in the dark blocks, so the foreground token resolves there too.
+function makeResolver(lines, remap, extra = {}) {
+  const light = new Map(Object.entries(extra));
+  for (const l of lines) for (const [v, val] of l.decls) light.set(v, val);
+  return (value, side) => {
+    let v = String(value).trim();
+    for (let i = 0; i < 12; i++) {
+      const mm = v.match(/^var\(\s*(--[\w-]+)\s*\)$/);
+      if (!mm) break;
+      const name = mm[1];
+      const flipped = side === 'dark' && remap && remap.has(name) ? remap.get(name).dark : null;
+      const next = flipped !== null ? flipped : (light.has(name) ? light.get(name) : null);
+      if (next === null) return null;
+      v = String(next).trim();
+    }
+    return v;
+  };
+}
+
+// Top-level rules only. @media and @keyframes bodies are handed back untouched
+// so the caller can assert nothing colour-bearing is hiding inside one.
+export function scanRules(css) {
+  const rules = [], at = [];
+  let i = 0, buf = '';
+  while (i < css.length) {
+    const ch = css[i];
+    if (ch === '{') {
+      const prelude = buf.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+      let depth = 1, j = i + 1;
+      while (j < css.length && depth > 0) { if (css[j] === '{') depth++; else if (css[j] === '}') depth--; j++; }
+      const body = css.slice(i + 1, j - 1);
+      if (/^@/.test(prelude)) at.push({ prelude, body });
+      else if (prelude) rules.push({ selector: prelude, body, decls: splitDecls(body) });
+      buf = ''; i = j; continue;
+    }
+    buf += ch; i++;
+  }
+  return { rules, at };
+}
+
+function splitDecls(body) {
+  const src = body.replace(/\/\*[\s\S]*?\*\//g, '');
+  const out = [];
+  let buf = '', depth = 0;
+  for (const ch of src) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (ch === ';' && depth === 0) { if (buf.trim()) out.push(buf.trim()); buf = ''; continue; }
+    buf += ch;
+  }
+  if (buf.trim()) out.push(buf.trim());
+  return out
+    .map((d) => { const i = d.indexOf(':'); return i < 0 ? null : { prop: d.slice(0, i).trim(), value: d.slice(i + 1).trim() }; })
+    .filter((d) => d && d.prop);
+}
+
+const FG_PROPS = new Set(['color', 'stroke']);
+const selList = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
+
+// The plan: which emitted declaration takes which token once the scheme goes
+// dark. Pure analysis — it writes nothing. `arrowsFollowThePage` is the defect
+// the selftest plants: the mistake Andrew caught, every arrow sent to the
+// foreground token because the PAGE is dark, ignoring its own disc.
+export function planSplit(m, componentCss, lines, remap, opts = {}) {
+  const split = m.web.dark?.split;
+  if (!split || !split.foreground || !split.foreground.token) {
+    m.gaps.push({
+      key: 'outputs.web.dark.split.foreground',
+      want: 'ruling 69: the token that carries the foreground-on-a-dark-surface job and does NOT flip',
+      using: 'no split — the page-ground token keeps both jobs and inverts every foreground in dark'
+    });
+    return null;
+  }
+  const GROUND = m.roles.pageGround;
+  const OD = split.foreground.token;
+  const ODval = split.foreground.value;
+  if (!ODval) fail(`outputs.web.dark.split.foreground names ${OD} but states no value for it`);
+  if (remap && remap.has(OD)) {
+    fail(`outputs.web.dark.remap flips ${OD}, but ruling 69 says the foreground token does NOT flip`);
+  }
+  const groundVar = `var(${GROUND})`;
+  const odVar = `var(${OD})`;
+  const resolve = makeResolver(lines, remap, { [OD]: ODval });
+  const { rules, at } = scanRules(componentCss);
+
+  // A colour-bearing use of the ground token inside a media block would never be
+  // seen by this pass. Nothing puts one there today; say so out loud if one appears.
+  const hiding = at.filter((a) => new RegExp(`(color|stroke)\\s*:\\s*var\\(\\s*${GROUND}\\s*\\)`).test(a.body));
+  if (hiding.length) {
+    fail(`a foreground use of ${GROUND} is inside ${hiding[0].prelude}; the split pass reads top-level rules only`);
+  }
+
+  // ---- the arrows, and the disc each one sits on ---------------------------
+  const byFirstSel = new Map();
+  for (const r of rules) for (const s of selList(r.selector)) if (!byFirstSel.has(s)) byFirstSel.set(s, r);
+  // A DISC is the rule one level up from an arrow that actually PAINTS a ground.
+  // An <svg> whose parent rule paints nothing is not on a disc at all — it is a
+  // glyph sitting on whatever the page gives it, and the foreground pass owns it.
+  const bgOf = (rule) => rule && rule.decls.find((d) => d.prop === 'background' || d.prop === 'background-color');
+  const discOf = (arrowSel) => {
+    const base = arrowSel.replace(/\s+svg$/, '');
+    for (const cand of [base, base.replace(/:hover/g, '')]) {
+      const rule = byFirstSel.get(cand);
+      if (rule && bgOf(rule)) return { sel: cand, rule };
+    }
+    return null;
+  };
+  const arrowRules = rules.filter((r) =>
+    selList(r.selector).every((s) => /\ssvg$/.test(s)) && r.decls.some((d) => d.prop === 'stroke'));
+
+  // A disc is a background painted with the ground token underneath an arrow. It
+  // is NOT a page, so it keeps the light value.
+  const discSels = new Set();
+  for (const a of arrowRules) for (const s of selList(a.selector)) { const d = discOf(s); if (d) discSels.add(d.sel); }
+
+  const overrides = [];
+  const grounds = [];
+  const idxOf = new Map(rules.map((r, i) => [r.selector, i]));
+  const push = (rule, prop, to, kind, why) => overrides.push({ selector: rule.selector, prop, from: groundVar, to, kind, why, srcIndex: idxOf.get(rule.selector) ?? 0 });
+
+  // ---- 1. the discs -------------------------------------------------------
+  const discMoved = new Set();
+  for (const sel of discSels) {
+    const r = byFirstSel.get(sel);
+    const bg = bgOf(r);
+    if (bg.value.trim() === groundVar) {
+      push(r, bg.prop, odVar, 'disc', 'a disc is not a page: it keeps its light value so its arrow still reads');
+      discMoved.add(sel);
+    }
+  }
+  const discDarkOf = (sel) => {
+    const bg = bgOf(byFirstSel.get(sel));
+    if (!bg) return null;
+    return discMoved.has(sel) ? ODval : resolve(bg.value, 'dark');
+  };
+
+  // ---- 2. every other foreground use of the ground token -------------------
+  //
+  // Runs before the arrows on purpose: an arrow drawn with `currentColor` takes
+  // its disc's text colour, and that colour has to have moved already before the
+  // law can measure the pair.
+  const arrowOwned = new Set();
+  for (const a of arrowRules) {
+    if (selList(a.selector).some((s) => discOf(s))) arrowOwned.add(`${a.selector}|stroke`);
+  }
+  for (const r of rules) {
+    for (const d of r.decls) {
+      if (d.value.trim() !== groundVar) continue;
+      const isFg = FG_PROPS.has(d.prop) || d.prop.startsWith('--');
+      if (!isFg) continue;
+      if (arrowOwned.has(`${r.selector}|${d.prop}`)) continue;
+      push(r, d.prop, odVar,
+        d.prop.startsWith('--') ? 'foreground var' : 'foreground',
+        d.prop.startsWith('--') ? "a component's own foreground custom property" : 'foreground on a dark surface');
+    }
+  }
+
+  // ---- 3. the arrows, measured against their own disc ----------------------
+  const discArrow = [];
+  for (const a of arrowRules) {
+    for (const s of selList(a.selector)) {
+      const stroke = a.decls.find((d) => d.prop === 'stroke');
+      const d = discOf(s);
+      if (!d) continue;
+      arrowOwned.add(`${a.selector}|stroke`);
+      const onGradient = /:hover/.test(s);
+      const discDark = onGradient ? null : discDarkOf(d.sel);
+      // `currentColor` on a glyph is the disc's own text colour, which the
+      // foreground pass may already have moved. Resolve it there rather than
+      // reporting an unmeasurable pair.
+      const inherited = d.rule.decls.find((x) => x.prop === 'color');
+      const strokeValue = /^currentColor$/i.test(stroke.value.trim()) && inherited
+        ? (overrides.find((o) => o.selector === d.rule.selector && o.prop === 'color') || {}).to || inherited.value
+        : stroke.value;
+      const asWritten = resolve(strokeValue, 'dark');
+      const ratio = discDark && asWritten ? contrastOf(asWritten, discDark) : null;
+      let to = null, why;
+      if (opts.arrowsFollowThePage) {
+        to = stroke.value.trim() === odVar ? null : odVar;
+        why = 'PLANTED DEFECT: the arrow follows the page, not its disc';
+      } else if (onGradient) {
+        // The disc under a hovered arrow is the accent gradient, not a flat
+        // colour. No number is guessed here: the arrow takes the foreground
+        // token because every stop of that gradient is a dark accent.
+        to = stroke.value.trim() === groundVar ? odVar : null;
+        why = 'on the accent gradient, not a flat disc — no ratio measured';
+      } else if (ratio !== null && ratio < CONTRAST_MIN) {
+        const cand = [[ODval, contrastOf(ODval, discDark)], [resolve(groundVar, 'dark'), contrastOf(resolve(groundVar, 'dark'), discDark)]]
+          .sort((x, y) => y[1] - x[1])[0];
+        to = cand[0] === ODval ? odVar : groundVar;
+        why = `${ratio}:1 on its own disc in dark, under ${CONTRAST_MIN}`;
+      } else {
+        why = ratio === null ? 'disc colour not resolvable' : `${ratio}:1 on its own disc in dark, clears ${CONTRAST_MIN}`;
+      }
+      // One rule, one override, however many selectors share it. A selector list
+      // is one declaration in the file and has to stay one.
+      if (to && to !== stroke.value.trim() && !overrides.some((o) => o.selector === a.selector && o.prop === 'stroke')) {
+        overrides.push({ selector: a.selector, prop: 'stroke', from: stroke.value.trim(), to, kind: 'arrow', why, srcIndex: idxOf.get(a.selector) ?? 0 });
+      }
+      const finalArrow = to ? (to === odVar ? ODval : resolve(to, 'dark')) : asWritten;
+      discArrow.push({
+        name: d.sel,
+        discSel: d.sel,
+        arrowSel: s,
+        discLight: resolve(bgOf(byFirstSel.get(d.sel)).value, 'light'),
+        discDark: discDark,
+        arrowDark: finalArrow,
+        ratio: discDark && finalArrow ? contrastOf(finalArrow, discDark) : null,
+        moved: !!to,
+        onGradient,
+        why
+      });
+    }
+  }
+
+  // ---- 4. THE GROUND JOB — everything left, recorded and NOT moved ---------
+  //
+  // The page, the paper button's own surface, and the ring around an overlapping
+  // face. A border painted with the ground token is a ground too. All of them are
+  // meant to go dark, so they keep the token and flip with it.
+  const moved = new Set(overrides.map((o) => `${o.selector}|${o.prop}`));
+  for (const r of rules) {
+    for (const d of r.decls) {
+      if (!new RegExp(`var\\(\\s*${GROUND}\\s*\\)`).test(d.value)) continue;
+      if (moved.has(`${r.selector}|${d.prop}`)) continue;
+      grounds.push({ selector: r.selector, prop: d.prop });
+    }
+  }
+
+  // ---- 4. ruling 68: accent TYPE on a dark ground --------------------------
+  //
+  // "I say we go with metal." Measured on ink: the accent is 2.95:1, which fails.
+  // This does NOT touch the button, which stays the accent in both themes
+  // (ruling 65) — the button carries the accent as a BACKGROUND, and only `color`
+  // declarations on the selectors the modules registered as accent TYPE move.
+  const accentVar = `var(${m.roles.accentPrimary})`;
+  const metaOnInk = m.OI('meta');
+  const accentRows = [];
+  for (const sel of m.accentType || []) {
+    const r = byFirstSel.get(selList(sel)[0]);
+    if (!r) fail(`a module registered "${sel}" as accent type and the emitter shipped no such rule`);
+    const d = r.decls.find((x) => x.prop === 'color' && x.value.trim() === accentVar);
+    if (!d) continue;
+    overrides.push({ selector: r.selector, prop: 'color', from: accentVar, to: metaOnInk, kind: 'accent type', why: 'ruling 68: accent TYPE on a dark ground is the on-ink meta, not the accent', srcIndex: idxOf.get(r.selector) ?? 0 });
+    accentRows.push({ selector: r.selector, was: resolve(accentVar, 'dark'), now: resolve(metaOnInk, 'dark') });
+  }
+
+  return { token: OD, value: ODval, groundVar, odVar, overrides, discArrow, grounds, accentRows, resolve };
 }
 
 // ---------------------------------------------------------------- modules
@@ -560,6 +947,10 @@ const MODULES = {};
 MODULES.base = (m) => {
   const o = m.opt;
   const modes = m.caps['surface.modes'].value;
+  // ruling 68: the two accent-TYPE jobs in the base module. The button is not
+  // here on purpose — it carries the accent as a background and ruling 65 keeps
+  // it the accent in both themes.
+  m.accentType.push('h1 b,h2 b', '.eyebrow');
   const css = [
     '*{box-sizing:border-box}',
     'html{-webkit-text-size-adjust:100%;overflow-x:hidden}',
@@ -761,6 +1152,10 @@ MODULES.roadmap = (m) => {
   };
   const names = (m.motion.keyframes || []).map((k) => k.name);
   const [outName, inName] = [names[0], names[1]];
+  // ruling 68: the widget's greeting eyebrow. The kit already swaps it for the
+  // on-ink meta under [data-contrast="dark"]; on a page that is itself dark it
+  // needs the same swap, which is what "make it the rule" means.
+  m.accentType.push('.rm .greet .eyebrow');
   return {
     css: [
       `.rm{position:relative;font-family:${m.F('sans')};--rmfg:${m.R('bodyText')};--rmmeta:${m.R('metaText')};--rmhair:${m.R('hairlineLight')};--rmtile:${m.R('cardGround')};--rmtileh:${m.R('altGround')}}`,
@@ -936,9 +1331,11 @@ export function emitKit(pack, opts = {}) {
   }
 
   const tokens = emitTokens(m, lines, scheme, remap);
-  const schemeBlocks = emitSchemeBlocks(lines, scheme, remap);
 
-  const parts = [head, importLine, '', tokens, ...schemeBlocks];
+  // THE MODULES RUN FIRST NOW. Ruling 69 is decided by reading the emitted
+  // component CSS — which declaration does which job — so the component rules
+  // have to exist before the scheme blocks can be written.
+  const modParts = [];
   const tails = [];
   const tailInto = {};
 
@@ -946,8 +1343,8 @@ export function emitKit(pack, opts = {}) {
     const mod = MODULES[name];
     if (!mod) fail(`outputs.web.components.order names "${name}" and this emitter has no module for it`);
     const r = mod(m);
-    if (name !== 'base') parts.push('', `/* ---------- ${sectionComment(m, name)} ---------- */`);
-    parts.push(r.css);
+    if (name !== 'base') modParts.push('', `/* ---------- ${sectionComment(m, name)} ---------- */`);
+    modParts.push(r.css);
     if (r.tail) tails.push(r.tail);
     for (const [bp, css] of Object.entries(r.tailInto || {})) {
       (tailInto[bp] = tailInto[bp] || []).push(css);
@@ -957,16 +1354,26 @@ export function emitKit(pack, opts = {}) {
   for (const [bp, list] of Object.entries(tailInto).sort((a, b) => Number(b[0]) - Number(a[0]))) {
     tails.push(`@media(max-width:${bp}px){${list.join('')}}`);
   }
+
+  const componentCss = [...modParts, ...tails].join('\n');
+  const plan = scheme === 'light' ? null : planSplit(m, componentCss, lines, remap, opts);
+  const schemeBlocks = emitSchemeBlocks(lines, scheme, remap, plan);
+  const splitBlocks = emitSplitBlocks(scheme, plan);
+
+  const parts = [head, importLine, '', tokens, ...schemeBlocks, ...modParts];
   if (tails.length) parts.push('', ...tails);
+  parts.push(...splitBlocks);
 
   const css = parts.join('\n') + '\n';
   const fontsHtml = emitFontsHtml(m);
   // tokens.generated.css is the token layer on its own, so it carries the scheme
   // too — a consumer that takes tokens without components still flips correctly.
+  // It carries the ruling 69 token and NOT the component overrides: those are
+  // component rules, and this file is the token layer.
   const tokensCss = [tokens, ...schemeBlocks].join('\n') + '\n';
   return {
     css, tokensCss, fontsHtml, model: m, gaps: m.gaps,
-    scheme, schemeSource, remap, remapProof, lines
+    scheme, schemeSource, remap, remapProof, lines, plan, componentCss
   };
 }
 
@@ -1235,7 +1642,8 @@ function lcs(a, b) {
 function blockMap(lines) {
   const OPENERS = [
     [MEDIA_NOTE, '@media (prefers-color-scheme: dark)'],
-    [EXPLICIT_NOTE, ':root[data-theme=…]']
+    [EXPLICIT_NOTE, ':root[data-theme=…]'],
+    [SPLIT_NOTE, 'the ruling 69 override run']
   ];
   const map = new Array(lines.length).fill(null);
   let cur = null, depth = 0, opened = false;
@@ -1244,7 +1652,15 @@ function blockMap(lines) {
     if (!cur) {
       const hit = OPENERS.find(([note]) => t === note);
       if (hit) { cur = hit[1]; depth = 0; opened = false; map[i] = cur; continue; }
-      if (/^:root\{/.test(t)) { cur = ':root'; depth = 0; opened = false; map[i] = cur; }
+      // Ruling 69's scoped overrides. Each is a complete rule whose selector
+      // starts with a scheme root scope, so it belongs to the scheme block by
+      // construction — it cannot apply in the light render at all. The comment
+      // that heads the run is mapped without opening anything, because it has no
+      // braces and would otherwise swallow the rest of the file.
+      if (t.trim() === SPLIT_NOTE_2) { map[i] = 'the ruling 69 override run'; continue; }
+      if (/^(?::where\(:root|@media \(prefers-color-scheme: dark\)\{$)/.test(t)) { cur = 'the ruling 69 override run'; depth = 0; opened = false; map[i] = cur; }
+      else if (/^:root(?::not\(\[data-theme=|\[data-theme=)/.test(t)) { cur = ':root[data-theme=…]'; depth = 0; opened = false; map[i] = cur; }
+      else if (/^:root\{/.test(t)) { cur = ':root'; depth = 0; opened = false; map[i] = cur; }
       else continue;
     } else {
       map[i] = cur;
@@ -1263,7 +1679,7 @@ export function proveSchemeDelta(lightCss, schemeCss, scheme, remap) {
   const B = schemeCss.split('\n');
   const ops = lcs(A, B);
   const map = blockMap(B);
-  const newBlocks = ['@media (prefers-color-scheme: dark)', ':root[data-theme=…]'];
+  const newBlocks = ['@media (prefers-color-scheme: dark)', ':root[data-theme=…]', 'the ruling 69 override run'];
 
   const added = ops.filter((o) => o.op === 'add').map((o) => ({ ...o, block: map[o.b] }));
   const removed = ops.filter((o) => o.op === 'del');
@@ -1363,6 +1779,69 @@ export function remapReport(proof) {
   }
   out.push(`  ${proof.ok ? 'PASS — the remap introduces no colour the light kit does not already ship.' : 'FAIL'}`);
   return out.join('\n');
+}
+
+// ---------------------------------------------------------------- the split, reported
+//
+// The claim "--paper did two jobs and now two tokens do one each" is only worth
+// anything if you can see WHICH declaration took which job. So both halves are
+// printed: every declaration that moved, and every one that deliberately did not.
+
+export function splitReport(plan) {
+  if (!plan) return 'THE SPLIT (ruling 69): not applicable — this scheme emits no dark blocks.';
+  const out = [`THE SPLIT (ruling 69) — ${plan.groundVar} did two jobs; ${plan.odVar} now carries the foreground one`];
+  const kinds = ['foreground', 'foreground var', 'disc', 'arrow', 'accent type'];
+  const rows = [];
+  for (const k of kinds) {
+    for (const o of plan.overrides.filter((x) => x.kind === k)) {
+      rows.push([k, o.selector, o.prop, o.from, o.to, o.why]);
+    }
+  }
+  out.push('');
+  out.push(`  ${plan.overrides.length} declaration(s) take a different token in dark. Nothing outside this list moves.`);
+  out.push(col2(['job', 'selector', 'property', 'light', 'dark', 'why'], [14, 42, 10, 16, 16, 52], rows));
+  const g = new Map();
+  for (const x of plan.grounds) g.set(`${x.selector}|${x.prop}`, x);
+  out.push('', `  THE GROUND JOB — ${g.size} declaration(s) keep ${plan.groundVar} and flip with it`);
+  out.push(col2(['selector', 'property'], [42, 18], [...g.values()].map((x) => [x.selector, x.prop])));
+  return out.join('\n');
+}
+
+// The law, measured in Node off the emitted values. Level 2 measures the same
+// three pairs again in a real browser; two independent instruments, on purpose.
+export function proveDiscArrowLaw(plan) {
+  if (!plan) return { ok: true, rows: [], report: 'THE DISC/ARROW LAW: not applicable — no dark blocks in this scheme.' };
+  const rows = plan.discArrow;
+  // A pair that cannot be resolved is not a pass. An instrument that reports
+  // "no number" and is counted green is how a blind spot ships.
+  const bad = rows.filter((r) => !r.onGradient && (r.ratio === null || r.ratio < CONTRAST_MIN));
+  const out = ["THE DISC/ARROW LAW — an arrow's colour follows its DISC, never the page"];
+  out.push('');
+  out.push(col2(['disc', 'arrow', 'disc in dark', 'arrow in dark', 'ratio', 'verdict'], [30, 34, 14, 14, 7, 46],
+    rows.map((r) => [
+      r.discSel,
+      r.arrowSel,
+      r.discDark || '(gradient)',
+      r.arrowDark || '?',
+      r.ratio === null ? '—' : `${r.ratio}:1`,
+      r.onGradient ? 'on the accent gradient, not measured'
+        : r.ratio === null ? 'NOT MEASURABLE — neither colour resolved'
+          : r.ratio < CONTRAST_MIN ? `FAIL, under ${CONTRAST_MIN}`
+            : `clears ${CONTRAST_MIN}${r.moved ? ', arrow moved' : ', arrow held'}`
+    ])));
+  out.push('', `  DISC/ARROW: ${bad.length === 0
+    ? `PASS — every measured pair differs and clears ${CONTRAST_MIN}:1 in dark`
+    : `FAIL — ${bad.length} pair(s) under ${CONTRAST_MIN}:1: ${bad.map((r) => `${r.arrowSel} ${r.ratio}:1`).join('; ')}`}`);
+  return { ok: bad.length === 0, rows, bad, report: out.join('\n') };
+}
+
+function col2(heads, widths, rows) {
+  const cut = (s, w) => (String(s ?? '').length > w ? String(s).slice(0, w - 1) + '…' : String(s ?? ''));
+  if (!rows.length) return '  (none)';
+  const lines = ['  ' + heads.map((h, i) => h.padEnd(widths[i])).join('  ')];
+  lines.push('  ' + widths.map((w) => '-'.repeat(w)).join('  '));
+  for (const r of rows) lines.push('  ' + r.map((c, i) => cut(c, widths[i]).padEnd(widths[i])).join('  '));
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------- gaps report
@@ -1577,7 +2056,26 @@ function runSchemeSelftest(packPath) {
     lines.push(`  ${r.ok ? 'FAILED' : 'RED   '}  ${name.padEnd(40)} ${r.ok ? 'the prover stayed GREEN — it is blind here' : `${r.removed.length} removed, ${r.changed.length} changed, ${r.outside.length} added outside`}`);
   }
 
-  lines.push('', `  SCHEME SELFTEST: ${pass ? 'PASS — each value emits the shape ruling 66 asks for, and every planted defect was refused' : 'FAIL'}`);
+  // RULING 69's own probe. The verifier for the disc/arrow law has to be shown
+  // going RED, or "DISC/ARROW: PASS" only means the check ran. The defect planted
+  // is the exact mistake Andrew caught by eye: every arrow sent to the foreground
+  // token because the PAGE is dark, ignoring the disc it actually sits on.
+  lines.push('', '  THE DISC/ARROW LAW — plant an arrow that follows its PAGE, require RED');
+  const control = proveDiscArrowLaw(built.system.plan);
+  lines.push(`  ${control.ok ? 'PASS  ' : 'FAILED'}  control: every arrow follows its own disc  ${control.rows.filter((r) => r.ratio !== null).map((r) => `${r.arrowSel.replace(/ svg$/, '')} ${r.ratio}:1`).join(' · ')}`);
+  if (!control.ok) pass = false;
+  const planted = proveDiscArrowLaw(emitKit(read(), { scheme: 'system', arrowsFollowThePage: true }).plan);
+  lines.push(`  ${planted.ok ? 'FAILED' : 'RED   '}  planted: arrows follow the page  ${planted.ok
+    ? 'the law verifier stayed GREEN — it is blind here'
+    : `${planted.bad.length} pair(s) collapse: ${planted.bad.map((r) => `${r.arrowSel} ${r.ratio}:1`).join('; ')}`}`);
+  if (planted.ok) pass = false;
+  // and the mangled emission has to reach the CSS, so the delta prover sees it too
+  const plantedCss = emitKit(read(), { scheme: 'system', arrowsFollowThePage: true }).css;
+  const plantedDiffers = plantedCss !== built.system.css;
+  lines.push(`  ${plantedDiffers ? 'RED   ' : 'FAILED'}  planted: the defect actually reaches the emitted CSS  ${plantedDiffers ? 'the two emissions differ' : 'the planted defect emitted the SAME file — the probe proves nothing'}`);
+  if (!plantedDiffers) pass = false;
+
+  lines.push('', `  SCHEME SELFTEST: ${pass ? 'PASS — each value emits the shape ruling 66 asks for, every planted defect was refused, and the disc/arrow law goes red on a page-following arrow' : 'FAIL'}`);
   return { pass, report: lines.join('\n') };
 }
 
@@ -1642,6 +2140,12 @@ hand-editing a published kit breaks the wire.`);
       console.log('\n' + '='.repeat(78));
       console.log(remapReport(built.remapProof));
       console.log('\n' + '='.repeat(78));
+      console.log(splitReport(built.plan));
+      console.log('\n' + '='.repeat(78));
+      const law = proveDiscArrowLaw(built.plan);
+      console.log(law.report);
+      if (!law.ok) bad = true;
+      console.log('\n' + '='.repeat(78));
       const d = proveSchemeDelta(light.css, built.css, built.scheme, built.remap);
       console.log(d.report);
       if (!d.ok) bad = true;
@@ -1675,7 +2179,14 @@ hand-editing a published kit breaks the wire.`);
           schemeCss: built.scheme === 'light' ? null : built.css,
           model: built.model,
           scheme: built.scheme,
-          remap: built.remap ? Object.fromEntries(built.remap) : null
+          remap: built.remap ? Object.fromEntries(built.remap) : null,
+          // Ruling 69's pairs, handed to the browser so the law is measured a
+          // second time by a second instrument. Hover pairs are left out: their
+          // disc is a gradient, and the harness does not hover in the dark run.
+          discArrow: built.plan
+            ? [...new Map(built.plan.discArrow.filter((r) => !r.onGradient)
+              .map((r) => [r.discSel, { name: r.discSel.replace(/ \.circ$| \.ico$/, '') || r.discSel, discSel: r.discSel }])).values()]
+            : []
         }))
         .then((r) => {
           console.log(r.report);
