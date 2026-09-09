@@ -1487,26 +1487,31 @@ const SCHEME_ASSERTS = [
 
 // A defect in the remap must stop the emit. The remap is the one place a colour
 // nobody ruled on could enter the kit, so "it emitted something" is a failure.
+// Brand-blind, like everything else here: a defect picks its token by POSITION
+// in the pack's own remap, never by name, so the same selftest runs on any pack.
+// #123456 is a synthetic value, deliberately not any brand's.
+const SYNTHETIC = '#123456';
+const remapKeys = (p) => Object.keys(p.outputs.web.dark.remap).filter((k) => k.startsWith('--'));
+
 const SCHEME_DEFECTS = [
-  {
-    name: 'a remap DARK value (--paper dark -> #123456)',
-    apply: (p) => { p.outputs.web.dark.remap['--paper'].dark = '#123456'; },
-    expect: /--paper/
+  (p) => {
+    const t = remapKeys(p)[0];
+    p.outputs.web.dark.remap[t].dark = SYNTHETIC;
+    return { name: `a remap DARK value (${t} dark -> ${SYNTHETIC})`, expect: new RegExp(t) };
   },
-  {
-    name: 'a remap LIGHT value (--body light -> #123456)',
-    apply: (p) => { p.outputs.web.dark.remap['--body'].light = '#123456'; },
-    expect: /--body/
+  (p) => {
+    const t = remapKeys(p)[1];
+    p.outputs.web.dark.remap[t].light = SYNTHETIC;
+    return { name: `a remap LIGHT value (${t} light -> ${SYNTHETIC})`, expect: new RegExp(t) };
   },
-  {
-    name: 'a remap entry naming a token the kit does not ship (--nope)',
-    apply: (p) => { p.outputs.web.dark.remap['--nope'] = { light: '#111111', dark: '#222222', from: '--ink' }; },
-    expect: /--nope/
+  (p) => {
+    const from = remapKeys(p)[0];
+    p.outputs.web.dark.remap['--nope'] = { light: SYNTHETIC, dark: SYNTHETIC, from };
+    return { name: 'a remap entry naming a token the kit does not ship (--nope)', expect: /--nope/ };
   },
-  {
-    name: 'an illegal defaultScheme ("auto")',
-    apply: (p) => { p.outputs.web.dark.defaultScheme = 'auto'; },
-    expect: /defaultScheme|auto/
+  (p) => {
+    p.outputs.web.dark.defaultScheme = 'auto';
+    return { name: 'an illegal defaultScheme ("auto")', expect: /defaultScheme|auto/ };
   }
 ];
 
@@ -1528,9 +1533,9 @@ function runSchemeSelftest(packPath) {
   }
 
   lines.push('', '  DEFECTS — plant one, require the emitter to REFUSE rather than emit');
-  for (const d of SCHEME_DEFECTS) {
+  for (const plant of SCHEME_DEFECTS) {
     const damaged = read();
-    d.apply(damaged);
+    const d = plant(damaged);
     const r = catchingFailures(() => emitKit(damaged, { scheme: 'system' }));
     const refused = !r.ok;
     const rightPlace = refused && d.expect.test(r.why);
@@ -1645,8 +1650,13 @@ hand-editing a published kit breaks the wire.`);
       console.log('\n' + '='.repeat(78));
       return import('./kit-verify-computed.mjs')
         .then((mod) => mod.run({
-          emittedCss: built.css,
+          // Level 2's comparison against the reference measures the LIGHT
+          // emission, exactly as level 1 does, so the reproduction proof does
+          // not move when --scheme does. The effective-scheme file goes in
+          // separately and is what the dark half drives.
+          emittedCss: light.css,
           targetCss,
+          schemeCss: built.scheme === 'light' ? null : built.css,
           model: built.model,
           scheme: built.scheme,
           remap: built.remap ? Object.fromEntries(built.remap) : null

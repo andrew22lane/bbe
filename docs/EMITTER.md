@@ -7,6 +7,8 @@ every brand. Change the pack, re-emit, every surface that links the kit follows.
 bbe kit design-hacker --out dist/kit
 bbe kit design-hacker --verify /tmp/dh-kit-target.css       # both proof levels
 bbe kit design-hacker --verify /tmp/dh-kit-target.css --selftest
+bbe kit design-hacker --scheme light  --verify /tmp/dh-kit-target.css   # half 1 alone
+bbe kit design-hacker --scheme system --verify /tmp/dh-kit-target.css   # half 1 + half 2
 bbe kit ./path/to/some.brandpack.json --vault ~/dh-work/dh-hub/vault
 ```
 
@@ -27,6 +29,7 @@ Same split as `tools/build-tokens.mjs`, which this file follows.
 | the dark ladder and the on-ink text alphas | the reset (`box-sizing`, `margin:0`, the plumbing) |
 | the font-loading URL and the families it carries | that `@import` is emitted FIRST |
 | the container rule and the breakpoint list | which family role a label component uses |
+| the colour scheme and the dark remap | the three block shapes a scheme emits |
 
 The emitter contains **no brand name, no hex, no font name, no slug**. It reads
 roles — `pageGround`, `accentPrimary`, `metaText` — and asks the pack what they
@@ -57,6 +60,71 @@ gap list is generated from the reads themselves, so it cannot go stale.
 5. Add the module's markup to `BLOCKS` in `tools/kit-verify-computed.mjs`, or
    level 2 will never look at it.
 6. Add a section title to `SECTION_TITLE`.
+
+## The colour scheme (ruling 66)
+
+Andrew, 2026-09-09: *"yes set to 'system' for dark/light. but good to have option
+for all sites to be 1 of three by default: light/dark/system"*. So the scheme is a
+brand-blind pack value, `outputs.web.dark.defaultScheme`, with exactly three legal
+settings. `--scheme <light|dark|system>` overrides it for one run. An illegal value
+in the pack stops the run whether or not this run uses it.
+
+| setting | what comes out |
+|---|---|
+| `light` | the `:root` light block alone. No `@media`, no `[data-theme]` block. Byte for byte what this emitter shipped before ruling 66. |
+| `dark` | the dark values IN `:root`, with `:root[data-theme="light"]` restoring light. |
+| `system` | three blocks in order: `:root` light; `@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){…} }`; `:root[data-theme="dark"]{…}` so an explicit choice wins in both directions. |
+
+**The block shape is copied from `tools/build-tokens.mjs`**, which already emits
+exactly this for embody-society, down to the two comment lines. Reusing a
+structure that ships beats inventing a second one that has to be argued about.
+
+The dark values come from `outputs.web.dark.remap`, which invents no colours:
+every entry names the token its dark value came `from`, and the emitter proves
+that value against the light `:root` it just emitted, both directions. A wrong
+number refuses the run rather than shipping a colour nobody ruled on.
+
+`:root` is built once as structured lines, so a dark block reuses the light line
+grouping instead of inventing a second one — which is also why the delta below
+can only ever be an insertion.
+
+## THE PROOF IS SPLIT, and stays split
+
+A proof that changes two things at once proves neither. So:
+
+- **Half 1, the reproduction.** Level 1 and level 2's reference comparison always
+  measure the **light** emission, whatever `--scheme` says. `RESOLVED DIFF EMPTY`
+  and zero computed-style disagreements mean the same thing they meant before.
+- **Half 2, the delta.** `SCHEME DELTA` diffs the non-light emission against that
+  same light file line by line, prints **every** added line and the block it lands
+  in, and requires: nothing removed, nothing changed, no line of content outside
+  the new blocks. For `dark` a changed `:root` line is expected, and every changed
+  token must be one the remap names.
+
+`--selftest` grows a scheme half: the shape each legal value emits, four planted
+defects the emitter must REFUSE rather than emit, and three mangles that must make
+the delta prover itself go red.
+
+## Level 2 in dark
+
+The reference kit has no dark blocks, so level 1 can say nothing about them and
+the light comparison cannot either — in a light browser the new blocks never
+apply. The dark rendering is therefore measured on its own terms, with
+`page.emulateMediaFeatures`:
+
+0. **The cascade.** Every combination of OS preference and reader choice is
+   loaded for real and the tokens read back, because "an explicit choice wins in
+   both directions" is a claim about the cascade, not about the text of the file.
+1. The remapped tokens resolve to their dark values.
+2. The ladder tokens and the accent hold.
+3. **WCAG AA** over every text/background pair and every SVG stroke, split into
+   NEW IN DARK and already failing in light — the light baseline is measured on
+   the **reference** kit, so "pre-existing" is a claim about the live stylesheet.
+   A failure here is a design finding, not an emitter fault, and it is printed
+   loudly rather than swallowed.
+4. **`.on-ink` on a dark page**, the open question the pack records at
+   `outputs.web.dark.openQuestion`. Measured and printed. Not answered: the pack
+   names Andrew as who rules it.
 
 ## Running the verify
 
