@@ -1,6 +1,6 @@
 {
   "name": "@andrew22lane/bbe",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "The Brand Builder Engine as one package: the shared static-site engine core, the brand-drift and gate-lint gates, the pack token builder, the byte-identity prover, and `bbe new-surface`, which scaffolds a new site or worker that is clean by construction. Consumers install it and pin a version. Nothing is copied.",
   "type": "module",
   "license": "UNLICENSED",
@@ -21,7 +21,8 @@
     "bbe-new-surface": "bin/bbe-new-surface",
     "bbe-gate": "bin/bbe-gate",
     "bbe-gate-lint": "tools/gate-lint.mjs",
-    "bbe-tokens": "tools/build-tokens.mjs"
+    "bbe-tokens": "tools/build-tokens.mjs",
+    "bbe-kit": "tools/build-kit.mjs"
   },
   "files": [
     "bin/",
@@ -32,5 +33,8 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "puppeteer": "^25.10.0"
   }
 }

@@ -8,6 +8,7 @@
 //   npx @andrew22lane/bbe new-surface --pack <slug> --kind site|worker --name <repo>
 //   npx @andrew22lane/bbe gate
 //   npx @andrew22lane/bbe tokens --pack brand/<slug>.brandpack.json --out src/tokens.generated.js
+//   npx @andrew22lane/bbe kit <slug> --out dist/kit --verify <reference.css>
 //   npx @andrew22lane/bbe verify-byte-identity <dirA> <dirB>
 //   npx @andrew22lane/bbe gate-lint --brand bex
 
@@ -23,6 +24,7 @@ const COMMANDS = {
   'new-surface': path.join(HERE, 'bbe-new-surface'),
   gate: path.join(HERE, 'bbe-gate'),
   tokens: path.join(HERE, '..', 'tools', 'build-tokens.mjs'),
+  kit: path.join(HERE, '..', 'tools', 'build-kit.mjs'),
   'gate-lint': path.join(HERE, '..', 'tools', 'gate-lint.mjs'),
   'brand-drift': path.join(HERE, '..', 'tools', 'brand-drift.mjs'),
   'verify-byte-identity': path.join(HERE, '..', 'tools', 'verify-byte-identity.mjs')
@@ -35,6 +37,7 @@ if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
   console.log('  bbe new-surface           scaffold a new site or worker on a brand pack');
   console.log('  bbe gate                  the brand gate for the current repo (bbe-gate)');
   console.log('  bbe tokens                generate tokens.generated.js from a pack');
+  console.log('  bbe kit                   emit a brand stylesheet from a pack (THE EMITTER)');
   console.log('  bbe gate-lint             the seven-check vault gate');
   console.log('  bbe brand-drift           the drift scanner on its own');
   console.log('  bbe verify-byte-identity  prove two build trees are identical');
