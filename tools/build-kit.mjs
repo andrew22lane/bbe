@@ -19,6 +19,7 @@
 // Usage:
 //   bbe kit <slug|path-to-pack> [--out <dir>] [--vault <path>]
 //                               [--verify <css>] [--computed] [--selftest]
+//                               [--scheme light|dark|system]
 //
 //   <slug>        resolved to <vault>/core/brand-packs/<slug>.brandpack.json
 //   --vault       vault root. Default $BBE_VAULT, else ./vault, else a walk up
@@ -33,6 +34,11 @@
 //                 green has not been tested.
 //   --gaps        print every value the emitter wanted from the pack and did not
 //                 find, with the exact key to add. Always printed on --verify.
+//   --scheme      override outputs.web.dark.defaultScheme (ruling 66) for this
+//                 run: light, dark or system. Exists so the two halves of the
+//                 proof can each be run on demand — `--scheme light` reproduces
+//                 the live kit, `--scheme system` adds the two dark blocks to
+//                 that exact file and nothing else.
 //
 // Emits into --out:
 //   <slug>-kit.css        the whole stylesheet
@@ -53,9 +59,22 @@ function argOf(flag) {
 }
 const has = (flag) => process.argv.includes(flag);
 
+// On the CLI a refusal should stop the run. Inside the selftest a refusal IS the
+// result being measured, so it has to be catchable — otherwise the only way to
+// test that the emitter refuses a bad pack is to watch it kill the process.
+let FAIL_THROWS = false;
+class PackRefused extends Error {}
 function fail(msg) {
+  if (FAIL_THROWS) throw new PackRefused(msg);
   console.error(`FAIL: ${msg}`);
   process.exit(1);
+}
+function catchingFailures(fn) {
+  const prev = FAIL_THROWS;
+  FAIL_THROWS = true;
+  try { return { ok: true, value: fn() }; }
+  catch (e) { if (e instanceof PackRefused) return { ok: false, why: e.message }; throw e; }
+  finally { FAIL_THROWS = prev; }
 }
 
 // ---------------------------------------------------------------- pack resolution
@@ -284,9 +303,13 @@ function resolveMetaLight(m) {
   return { value: rgbaOf(bodyHex, aMeta), derived: true, rule: `bodyText at the stated meta alpha ${aMeta}` };
 }
 
-function emitTokens(m) {
-  const out = [];
-  const decl = (cssVar, value) => `${cssVar}:${value}`;
+// A :root source LINE, as structure: the declarations that share the line, plus
+// the comment that trails it. Built once and rendered three ways — the light
+// block, and (for a non-light scheme) the two dark bodies, which reuse this same
+// grouping so a dark block reads in the same order as the block it overrides.
+function tokenLines(m) {
+  const lines = [];
+  const line = (decls, comment) => lines.push({ decls, comment: comment || null });
 
   // --- palette ---------------------------------------------------------------
   const keys = Object.keys(m.palette);
@@ -300,23 +323,17 @@ function emitTokens(m) {
     groups = [];
     for (let i = 0; i < keys.length; i += PALETTE_CHUNK) groups.push(keys.slice(i, i + PALETTE_CHUNK));
   }
-  for (const g of groups) {
-    out.push(g.map((k) => decl(m.palette[k].cssVar, m.palette[k].value)).join(';') + ';');
-  }
+  for (const g of groups) line(g.map((k) => [m.palette[k].cssVar, m.palette[k].value]));
 
   // --- type scale: fluid sizes, then fixed, then the container ---------------
   const scaled = Object.entries(m.scale).filter(([, e]) => e.cssVar);
   const fluid = scaled.filter(([, e]) => /clamp\(/.test(e.value));
   const fixed = scaled.filter(([, e]) => !/clamp\(/.test(e.value));
-  if (fluid.length) out.push(fluid.map(([, e]) => decl(e.cssVar, e.value)).join(';') + ';');
-  out.push(
-    [...fixed.map(([, e]) => decl(e.cssVar, e.value)), decl(m.container.cssVar, m.container.value)].join(';') + ';'
-  );
+  if (fluid.length) line(fluid.map(([, e]) => [e.cssVar, e.value]));
+  line([...fixed.map(([, e]) => [e.cssVar, e.value]), [m.container.cssVar, m.container.value]]);
 
   // --- families: one per line, each carrying the pack's own note -------------
-  for (const [, f] of Object.entries(m.fams)) {
-    out.push(decl(f.cssVar, f.value) + ';' + (f.note ? `   /* ${f.note} */` : ''));
-  }
+  for (const [, f] of Object.entries(m.fams)) line([[f.cssVar, f.value]], f.note);
 
   // --- the translucent text family ------------------------------------------
   const meta = resolveMetaLight(m);
@@ -327,25 +344,189 @@ function emitTokens(m) {
       using: `${meta.value}, derived from ${meta.rule} after proving the rule on the pack's other three members`
     });
   }
-  out.push(
-    [decl(m.shadow.hairline.light.cssVar, m.shadow.hairline.light.value),
-     decl(m.shadow.hairline.ink.cssVar, m.shadow.hairline.ink.value)].join(';') + ';'
-  );
-  out.push(
-    [decl(m.onInk.body.cssVar, m.onInk.body.value),
-     decl(m.roles.metaText, meta.value),
-     decl(m.onInk.meta.cssVar, m.onInk.meta.value)].join(';') + ';'
-  );
+  line([
+    [m.shadow.hairline.light.cssVar, m.shadow.hairline.light.value],
+    [m.shadow.hairline.ink.cssVar, m.shadow.hairline.ink.value]
+  ]);
+  line([
+    [m.onInk.body.cssVar, m.onInk.body.value],
+    [m.roles.metaText, meta.value],
+    [m.onInk.meta.cssVar, m.onInk.meta.value]
+  ]);
 
   // --- easing, radius, elevation --------------------------------------------
-  out.push(Object.values(m.motion.easing).map((e) => decl(e.cssVar, e.value)).join(';') + ';');
-  out.push(
-    Object.entries(m.radius.cssVars).map(([k, v]) => decl(v, m.radius.scale[k])).join(';') + ';'
-  );
-  out.push(decl(m.shadow.md.cssVar, m.shadow.md.value) + ';');
-  out.push(decl(m.shadow.glow.cssVar, m.shadow.glow.value) + ';');
+  line(Object.values(m.motion.easing).map((e) => [e.cssVar, e.value]));
+  line(Object.entries(m.radius.cssVars).map(([k, v]) => [v, m.radius.scale[k]]));
+  line([[m.shadow.md.cssVar, m.shadow.md.value]]);
+  line([[m.shadow.glow.cssVar, m.shadow.glow.value]]);
 
-  return `:root{\n${out.join('\n')}\n}`;
+  return lines;
+}
+
+function renderLines(lines, indent = '') {
+  return lines
+    .map((l) => indent + l.decls.map(([v, val]) => `${v}:${val}`).join(';') + ';' + (l.comment ? `   /* ${l.comment} */` : ''))
+    .join('\n');
+}
+
+// ---------------------------------------------------------------- the scheme
+//
+// RULING 66 (Andrew, 2026-09-09): "yes set to 'system' for dark/light. but good
+// to have option for all sites to be 1 of three by default: light/dark/system".
+// So the colour scheme is a brand-blind pack value with exactly three settings,
+// read from outputs.web.dark.defaultScheme and overridable with --scheme.
+//
+//   light   the :root light block alone. No @media, no [data-theme] block.
+//           This is what the emitter shipped before ruling 66 and it must stay
+//           byte-for-byte that, which is what the SCHEME DELTA proof shows.
+//   dark    the dark values IN :root, with [data-theme="light"] restoring light.
+//   system  three blocks: :root light, then the @media block, then the explicit
+//           [data-theme="dark"] block so a reader's own choice wins either way.
+//
+// THE SHAPE OF THOSE BLOCKS IS COPIED FROM tools/build-tokens.mjs, which already
+// emits exactly this for embody-society (see its `mediaBlock` and
+// `explicitDarkBlock`), down to the two comment lines. Reusing a structure that
+// already ships beats inventing a second one that has to be argued about.
+
+export const SCHEMES = ['light', 'dark', 'system'];
+const DEFAULT_SCHEME = 'light';
+
+export function resolveScheme(m, override) {
+  const stated = m.web.dark?.defaultScheme;
+  // An illegal value in the pack is a broken pack, whether or not this run
+  // overrides it. Refusing only when it is USED would let it sit there until the
+  // day someone drops the flag.
+  if (stated !== undefined && stated !== null && !SCHEMES.includes(stated)) {
+    fail(`outputs.web.dark.defaultScheme is "${stated}"; ruling 66 allows exactly ${SCHEMES.join(', ')}`);
+  }
+  if (override) {
+    if (!SCHEMES.includes(override)) fail(`--scheme must be one of ${SCHEMES.join(', ')} — got "${override}"`);
+    return { scheme: override, source: `--scheme (pack says ${stated || 'nothing'})` };
+  }
+  if (stated === undefined || stated === null) {
+    m.gaps.push({
+      key: 'outputs.web.dark.defaultScheme',
+      want: `which of ${SCHEMES.join('/')} this brand ships by default (ruling 66)`,
+      using: DEFAULT_SCHEME
+    });
+    return { scheme: DEFAULT_SCHEME, source: 'the emitter default, pack states none' };
+  }
+  return { scheme: stated, source: 'outputs.web.dark.defaultScheme' };
+}
+
+// outputs.web.dark.remap, as cssVar -> { light, dark, from, role }. Keys that do
+// not name a custom property (_why, unchanged) are not remap entries.
+export function schemeRemap(m) {
+  const remap = m.web.dark?.remap;
+  if (!remap || typeof remap !== 'object') {
+    fail('a non-light scheme needs outputs.web.dark.remap — which light token takes which value when the scheme goes dark');
+  }
+  const map = new Map();
+  for (const [k, v] of Object.entries(remap)) {
+    if (!k.startsWith('--') || !v || typeof v !== 'object') continue;
+    if (v.light === undefined || v.dark === undefined) {
+      fail(`outputs.web.dark.remap["${k}"] states no light/dark pair`);
+    }
+    map.set(k, { light: String(v.light), dark: String(v.dark), from: v.from || null, role: v.role || null });
+  }
+  if (!map.size) fail('outputs.web.dark.remap names no tokens to remap');
+  return map;
+}
+
+// THE REMAP INVENTS NO COLOURS — and that is checkable, not a promise. Every
+// entry names the token it takes its dark value FROM, so the emitter proves the
+// dark value equals what the light :root already ships for that token, and the
+// light value equals what the light :root already ships for the token itself.
+// A wrong number in the remap stops the run instead of shipping a colour nobody
+// ruled on. This is also what the selftest's planted remap defect trips.
+export function proveRemap(m, lines, remap) {
+  const shipped = new Map();
+  for (const l of lines) for (const [v, val] of l.decls) shipped.set(v, val);
+  const rows = [];
+  for (const [cssVar, e] of remap) {
+    const ownLight = shipped.get(cssVar);
+    const srcLight = e.from ? shipped.get(e.from) : undefined;
+    const lightOk = ownLight !== undefined && ownLight === e.light;
+    const darkOk = e.from ? srcLight !== undefined && srcLight === e.dark : null;
+    rows.push({
+      token: cssVar,
+      light: e.light,
+      dark: e.dark,
+      from: e.from || '(none stated)',
+      lightOk,
+      darkOk,
+      note: !lightOk
+        ? `the light :root ships ${ownLight === undefined ? 'no such token' : ownLight}`
+        : darkOk === false
+          ? `${e.from} ships ${srcLight === undefined ? 'nothing' : srcLight}, not ${e.dark}`
+          : darkOk === null
+            ? 'no "from" stated, so the dark value is unproven'
+            : 'ok'
+    });
+  }
+  for (const r of rows) {
+    if (r.darkOk === null) {
+      m.gaps.push({
+        key: `outputs.web.dark.remap["${r.token}"].from`,
+        want: 'which light token this dark value came from, so the emitter can prove it invents no colour',
+        using: `${r.dark}, taken on trust`
+      });
+    }
+  }
+  const bad = rows.filter((r) => !r.lightOk || r.darkOk === false);
+  return { rows, ok: bad.length === 0, bad };
+}
+
+// The dark body: the light line grouping, filtered to the remapped tokens, with
+// each one carrying its other value. Comments are dropped — a note explaining a
+// light value does not describe its dark twin.
+function remapLines(lines, remap, side) {
+  const out = [];
+  for (const l of lines) {
+    const decls = l.decls.filter(([v]) => remap.has(v)).map(([v]) => [v, remap.get(v)[side]]);
+    if (decls.length) out.push({ decls, comment: null });
+  }
+  return out;
+}
+
+// Same wording as build-tokens.mjs, deliberately.
+const MEDIA_NOTE = '/* system preference, unless the reader has explicitly chosen light */';
+const EXPLICIT_NOTE = '/* explicit choice always wins, in both directions */';
+
+function emitTokens(m, lines, scheme, remap) {
+  const body = scheme === 'dark' ? remapOnto(lines, remap, 'dark') : lines;
+  return `:root{\n${renderLines(body)}\n}`;
+}
+
+// scheme "dark": the dark values go IN :root, in place, so the light grouping,
+// the comments and every untouched token survive exactly as they are.
+function remapOnto(lines, remap, side) {
+  return lines.map((l) => ({
+    comment: l.comment,
+    decls: l.decls.map(([v, val]) => (remap.has(v) ? [v, remap.get(v)[side]] : [v, val]))
+  }));
+}
+
+// The blocks that follow :root. Empty for "light" — that is the whole point of
+// the split proof: nothing is added, so nothing can have changed.
+function emitSchemeBlocks(lines, scheme, remap) {
+  if (scheme === 'light') return [];
+  if (scheme === 'dark') {
+    return ['', EXPLICIT_NOTE, ':root[data-theme="light"]{', renderLines(remapLines(lines, remap, 'light'), '  '), '}'];
+  }
+  return [
+    '',
+    MEDIA_NOTE,
+    '@media (prefers-color-scheme: dark){',
+    '  :root:not([data-theme="light"]){',
+    renderLines(remapLines(lines, remap, 'dark'), '    '),
+    '  }',
+    '}',
+    EXPLICIT_NOTE,
+    ':root[data-theme="dark"]{',
+    renderLines(remapLines(lines, remap, 'dark'), '  '),
+    '}'
+  ];
 }
 
 // ---------------------------------------------------------------- modules
@@ -690,7 +871,7 @@ function sectionComment(m, name) {
   return why ? `${title} · ${why}` : title;
 }
 
-export function emitKit(pack) {
+export function emitKit(pack, opts = {}) {
   const m = makeModel(pack);
   m.bp = (px) => {
     const list = m.web.components?.breakpoints;
@@ -717,9 +898,31 @@ export function emitKit(pack) {
   // CSS requires @import BEFORE any rule. Emitted first, always.
   const importLine = `@import url("${m.fontLoad.url}");`;
 
-  const tokens = emitTokens(m);
+  // ---- the colour scheme (ruling 66) ----------------------------------------
+  // The :root lines are built ONCE, as structure. "light" renders them and stops
+  // there, so a light emission is byte-for-byte what this emitter shipped before
+  // ruling 66. "dark" and "system" render the same lines again, filtered to the
+  // remapped tokens — which is why the delta can only ever be an insertion.
+  const lines = tokenLines(m);
+  const { scheme, source: schemeSource } = resolveScheme(m, opts.scheme);
+  let remap = null;
+  let remapProof = null;
+  if (scheme !== 'light') {
+    remap = schemeRemap(m);
+    remapProof = proveRemap(m, lines, remap);
+    if (!remapProof.ok) {
+      fail(
+        'outputs.web.dark.remap does not match the light :root this emitter ships, so a dark block would ' +
+          'introduce a colour nobody ruled on:\n' +
+          remapProof.bad.map((r) => `  ${r.token}: ${r.note}`).join('\n')
+      );
+    }
+  }
 
-  const parts = [head, importLine, '', tokens];
+  const tokens = emitTokens(m, lines, scheme, remap);
+  const schemeBlocks = emitSchemeBlocks(lines, scheme, remap);
+
+  const parts = [head, importLine, '', tokens, ...schemeBlocks];
   const tails = [];
   const tailInto = {};
 
@@ -742,7 +945,13 @@ export function emitKit(pack) {
 
   const css = parts.join('\n') + '\n';
   const fontsHtml = emitFontsHtml(m);
-  return { css, tokensCss: tokens + '\n', fontsHtml, model: m, gaps: m.gaps };
+  // tokens.generated.css is the token layer on its own, so it carries the scheme
+  // too — a consumer that takes tokens without components still flips correctly.
+  const tokensCss = [tokens, ...schemeBlocks].join('\n') + '\n';
+  return {
+    css, tokensCss, fontsHtml, model: m, gaps: m.gaps,
+    scheme, schemeSource, remap, remapProof, lines
+  };
 }
 
 function emitFontsHtml(m) {
@@ -971,6 +1180,175 @@ export function verifyLevel1(emittedCss, targetCss) {
   return { ok: resClean, rawClean, resClean, raw, res, atMissing, atExtra, report: report.join('\n') };
 }
 
+// ---------------------------------------------------------------- SCHEME DELTA
+//
+// THE PROOF STAYS SPLIT. A proof that changes two things at once proves neither.
+//
+//   half 1  the LIGHT emission still reproduces the live kit — level 1 above,
+//           run on the light emission whatever --scheme says. Unchanged.
+//   half 2  this table: the non-light emission against that same light emission,
+//           line by line, showing that the whole difference is the new blocks.
+//
+// For "system" the difference must be a pure INSERTION: nothing removed, nothing
+// changed, and every added line of content inside one of the two new blocks. For
+// "dark" the dark values go in :root by design, so changed lines are expected —
+// but every one of them must be a remapped token and nothing else.
+
+function lcs(a, b) {
+  const n = a.length, mLen = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Uint32Array(mLen + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = mLen - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const ops = [];
+  let i = 0, j = 0;
+  while (i < n && j < mLen) {
+    if (a[i] === b[j]) { ops.push({ op: 'same', a: i, b: j, text: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ op: 'del', a: i, b: null, text: a[i] }); i++; }
+    else { ops.push({ op: 'add', a: null, b: j, text: b[j] }); j++; }
+  }
+  while (i < n) { ops.push({ op: 'del', a: i, b: null, text: a[i] }); i++; }
+  while (j < mLen) { ops.push({ op: 'add', a: null, b: j, text: b[j] }); j++; }
+  return ops;
+}
+
+// Which named block each line of the emitted file sits in. A block opens on its
+// comment line and closes when brace depth comes back to zero.
+function blockMap(lines) {
+  const OPENERS = [
+    [MEDIA_NOTE, '@media (prefers-color-scheme: dark)'],
+    [EXPLICIT_NOTE, ':root[data-theme=…]']
+  ];
+  const map = new Array(lines.length).fill(null);
+  let cur = null, depth = 0, opened = false;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i];
+    if (!cur) {
+      const hit = OPENERS.find(([note]) => t === note);
+      if (hit) { cur = hit[1]; depth = 0; opened = false; map[i] = cur; continue; }
+      if (/^:root\{/.test(t)) { cur = ':root'; depth = 0; opened = false; map[i] = cur; }
+      else continue;
+    } else {
+      map[i] = cur;
+    }
+    for (const ch of t) {
+      if (ch === '{') { depth++; opened = true; }
+      else if (ch === '}') depth--;
+    }
+    if (opened && depth <= 0) { cur = null; }
+  }
+  return map;
+}
+
+export function proveSchemeDelta(lightCss, schemeCss, scheme, remap) {
+  const A = lightCss.split('\n');
+  const B = schemeCss.split('\n');
+  const ops = lcs(A, B);
+  const map = blockMap(B);
+  const newBlocks = ['@media (prefers-color-scheme: dark)', ':root[data-theme=…]'];
+
+  const added = ops.filter((o) => o.op === 'add').map((o) => ({ ...o, block: map[o.b] }));
+  const removed = ops.filter((o) => o.op === 'del');
+
+  // A "change" is a removal and an addition that are the same :root line carrying
+  // different values. Pair them up so a remapped :root line is not reported as
+  // one line vanishing and an unrelated one appearing.
+  const remapped = remap ? [...remap.keys()] : [];
+  const isRootTokenLine = (t) => /^--/.test(t.trim());
+  const changed = [];
+  for (const d of removed) {
+    const cand = added.find((x) => x.block === ':root' && isRootTokenLine(x.text) && !x.paired &&
+      x.text.split(';')[0].split(':')[0] === d.text.split(';')[0].split(':')[0]);
+    if (cand) { cand.paired = true; d.paired = true; changed.push({ from: d.text, to: cand.text, line: cand.b + 1 }); }
+  }
+  const trueRemoved = removed.filter((d) => !d.paired);
+  const trueAdded = added.filter((x) => !x.paired);
+
+  const blank = trueAdded.filter((x) => x.text.trim() === '');
+  const inNew = trueAdded.filter((x) => x.text.trim() !== '' && newBlocks.includes(x.block));
+  const outside = trueAdded.filter((x) => x.text.trim() !== '' && !newBlocks.includes(x.block));
+
+  // every changed line must be a :root line whose changed tokens are ALL remapped
+  const badChange = changed.filter((c) => {
+    const names = (s) => s.trim().split(';').filter(Boolean).map((d) => d.split(':')[0].trim());
+    const from = names(c.from.replace(/\/\*[\s\S]*?\*\//g, ''));
+    const to = names(c.to.replace(/\/\*[\s\S]*?\*\//g, ''));
+    if (from.join('|') !== to.join('|')) return true;
+    const moved = c.from.split(';').filter(Boolean).filter((d, i) => d !== c.to.split(';')[i]);
+    return moved.some((d) => !remapped.includes(d.split(':')[0].trim()));
+  });
+
+  const ok = scheme === 'system'
+    ? trueRemoved.length === 0 && changed.length === 0 && outside.length === 0
+    : trueRemoved.length === 0 && outside.length === 0 && badChange.length === 0;
+
+  const perBlock = {};
+  for (const x of inNew) perBlock[x.block] = (perBlock[x.block] || 0) + 1;
+
+  const rows = [
+    ['lines, light emission', String(A.length)],
+    [`lines, ${scheme} emission`, String(B.length)],
+    ['lines REMOVED from the light emission', String(trueRemoved.length)],
+    ['lines CHANGED in the light emission', String(changed.length) + (scheme === 'dark' ? ` (expected: the dark values go in :root; ${badChange.length} carry a token that is not in the remap)` : '')],
+    ['lines ADDED, blank separators', String(blank.length)],
+    ['lines ADDED, content, inside a new block', String(inNew.length)],
+    ...newBlocks.filter((b) => perBlock[b]).map((b) => [`    ${b}`, String(perBlock[b])]),
+    ['lines ADDED, content, OUTSIDE both new blocks', String(outside.length)]
+  ];
+
+  const w1 = Math.max(...rows.map((r) => r[0].length));
+  const out = [`SCHEME DELTA — "${scheme}" against "light", line by line`];
+  out.push('  Half 1 of the proof (level 1 above) is run on the LIGHT emission and is untouched by this.');
+  out.push('  Half 2 is this: what the scheme adds to that exact file, and nothing else.');
+  out.push('');
+  for (const [k, v] of rows) out.push('  ' + k.padEnd(w1) + '  ' + v);
+
+  if (changed.length) {
+    out.push('', '  CHANGED lines');
+    out.push('  ' + 'line'.padEnd(6) + '  ' + 'light'.padEnd(58) + '  ' + scheme);
+    out.push('  ' + '-'.repeat(6) + '  ' + '-'.repeat(58) + '  ' + '-'.repeat(58));
+    for (const c of changed) out.push('  ' + String(c.line).padEnd(6) + '  ' + c.from.slice(0, 58).padEnd(58) + '  ' + c.to.slice(0, 58));
+  }
+  if (trueRemoved.length) {
+    out.push('', '  REMOVED lines (there must be none)');
+    for (const d of trueRemoved) out.push('    ' + d.text);
+  }
+
+  out.push('', '  EVERY ADDED LINE, and the block it lands in');
+  out.push('  ' + 'line'.padEnd(6) + '  ' + 'block'.padEnd(36) + '  text');
+  out.push('  ' + '-'.repeat(6) + '  ' + '-'.repeat(36) + '  ' + '-'.repeat(64));
+  for (const x of trueAdded) {
+    const blk = x.text.trim() === '' ? '(blank separator)' : (x.block || 'OUTSIDE ANY NEW BLOCK');
+    out.push('  ' + String(x.b + 1).padEnd(6) + '  ' + blk.padEnd(36) + '  ' + (x.text.length > 64 ? x.text.slice(0, 63) + '…' : x.text));
+  }
+
+  out.push('', `  SCHEME DELTA: ${ok
+    ? (scheme === 'system'
+      ? 'PASS — nothing removed, nothing changed, every added line of content inside the two new blocks'
+      : 'PASS — nothing removed, every changed line a remapped token, every added line inside the new block')
+    : 'FAIL — the scheme moved something it had no business moving'}`);
+  return { ok, added: trueAdded, removed: trueRemoved, changed, outside, report: out.join('\n') };
+}
+
+// The remap table, printed so the "invents no colours" claim is readable rather
+// than asserted. Every dark value is checked against the token it says it came
+// from, in the light :root this same run emitted.
+export function remapReport(proof) {
+  if (!proof) return 'SCHEME REMAP: not applicable — scheme is "light", no token is remapped.';
+  const cols = [['token', 'token', 10], ['light', 'light', 24], ['dark', 'dark', 24], ['from', 'from', 10], ['proof', 'note', 30]];
+  const out = ['SCHEME REMAP — every dark value checked against the light token it says it came from'];
+  out.push('  ' + cols.map(([h, , w]) => h.padEnd(w)).join('  '));
+  out.push('  ' + cols.map(([, , w]) => '-'.repeat(w)).join('  '));
+  for (const r of proof.rows) {
+    const verdict = r.lightOk && r.darkOk === true ? 'both sides check out' : r.note;
+    out.push('  ' + [r.token.padEnd(10), r.light.padEnd(24), r.dark.padEnd(24), String(r.from).padEnd(10), verdict.padEnd(30)].join('  '));
+  }
+  out.push(`  ${proof.ok ? 'PASS — the remap introduces no colour the light kit does not already ship.' : 'FAIL'}`);
+  return out.join('\n');
+}
+
 // ---------------------------------------------------------------- gaps report
 
 function gapReport(gaps) {
@@ -1029,14 +1407,17 @@ const DEFECTS = [
 
 function runSelftest(packPath, targetCss) {
   const clean = JSON.parse(fs.readFileSync(packPath, 'utf8'));
-  const base = verifyLevel1(emitKit(clean).css, targetCss);
+  // The reference kit has no dark blocks, so this half of the proof is measured
+  // on the LIGHT emission — the same file level 1 measures. Keeping the halves
+  // split is the whole point.
+  const base = verifyLevel1(emitKit(clean, { scheme: 'light' }).css, targetCss);
   const lines = ['SELFTEST — plant a defect, require the verifier to go RED', ''];
   lines.push(`  control (undamaged pack): RESOLVED DIFF ${base.resClean ? 'EMPTY -> GREEN' : 'NOT EMPTY -> the control itself is red, selftest is meaningless'}`);
   let pass = base.resClean;
   for (const d of DEFECTS) {
     const damaged = JSON.parse(fs.readFileSync(packPath, 'utf8'));
     d.apply(damaged);
-    const v = verifyLevel1(emitKit(damaged).css, targetCss);
+    const v = verifyLevel1(emitKit(damaged, { scheme: 'light' }).css, targetCss);
     const hits = [...v.res.changed.map((c) => c.key), ...v.res.missing, ...v.res.extra, ...v.atMissing, ...v.atExtra];
     const wentRed = !v.resClean;
     const rightPlace = hits.some((h) => d.expect.test(h));
@@ -1048,12 +1429,143 @@ function runSelftest(packPath, targetCss) {
   return { pass, report: lines.join('\n') };
 }
 
+
+// ---- the scheme half of the selftest (ruling 66) ----------------------------
+//
+// Three shape assertions, one per legal value, then defects. The shape
+// assertions matter because the scheme blocks live OUTSIDE the reference kit —
+// level 1 compares against a file that has no dark blocks at all, so it can
+// never say a word about them. Without these the dark work would be untested.
+
+const rootBlock = (css) => (css.match(/^:root\{\n([\s\S]*?)\n\}/m) || [, ''])[1];
+const namedBlock = (css, head) => {
+  const i = css.indexOf(head);
+  if (i < 0) return null;
+  return css.slice(i, css.indexOf('\n}', i) + 2);
+};
+
+const SCHEME_ASSERTS = [
+  {
+    scheme: 'light',
+    name: 'light emits NO prefers-color-scheme and NO [data-theme] block',
+    check: (css) => (/prefers-color-scheme/.test(css) ? 'a @media block is present' :
+      /\[data-theme/.test(css) ? 'a [data-theme] block is present' : null)
+  },
+  {
+    scheme: 'system',
+    name: 'system emits both new blocks, @media FIRST so the explicit choice wins',
+    check: (css) => {
+      const a = css.indexOf('@media (prefers-color-scheme: dark){\n  :root:not([data-theme="light"]){');
+      const b = css.indexOf(':root[data-theme="dark"]{');
+      if (a < 0) return 'no @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) } block';
+      if (b < 0) return 'no :root[data-theme="dark"] block';
+      if (b < a) return 'the explicit block is emitted before the @media block, so it cannot win';
+      return null;
+    }
+  },
+  {
+    scheme: 'system',
+    name: 'system leaves the light values in :root untouched',
+    check: (css, ctx) => (rootBlock(css) === rootBlock(ctx.lightCss) ? null : 'the :root block moved')
+  },
+  {
+    scheme: 'dark',
+    name: 'dark puts the DARK values in :root, and restores light under [data-theme="light"]',
+    check: (css, ctx) => {
+      const root = rootBlock(css);
+      const restore = namedBlock(css, ':root[data-theme="light"]{');
+      if (!restore) return 'no :root[data-theme="light"] block to restore light';
+      for (const [token, e] of ctx.remap) {
+        if (!root.includes(`${token}:${e.dark}`)) return `:root does not carry ${token}:${e.dark}`;
+        if (root.includes(`${token}:${e.light};`)) return `:root still carries the light value for ${token}`;
+        if (!restore.includes(`${token}:${e.light}`)) return `[data-theme="light"] does not restore ${token}:${e.light}`;
+      }
+      return null;
+    }
+  }
+];
+
+// A defect in the remap must stop the emit. The remap is the one place a colour
+// nobody ruled on could enter the kit, so "it emitted something" is a failure.
+const SCHEME_DEFECTS = [
+  {
+    name: 'a remap DARK value (--paper dark -> #123456)',
+    apply: (p) => { p.outputs.web.dark.remap['--paper'].dark = '#123456'; },
+    expect: /--paper/
+  },
+  {
+    name: 'a remap LIGHT value (--body light -> #123456)',
+    apply: (p) => { p.outputs.web.dark.remap['--body'].light = '#123456'; },
+    expect: /--body/
+  },
+  {
+    name: 'a remap entry naming a token the kit does not ship (--nope)',
+    apply: (p) => { p.outputs.web.dark.remap['--nope'] = { light: '#111111', dark: '#222222', from: '--ink' }; },
+    expect: /--nope/
+  },
+  {
+    name: 'an illegal defaultScheme ("auto")',
+    apply: (p) => { p.outputs.web.dark.defaultScheme = 'auto'; },
+    expect: /defaultScheme|auto/
+  }
+];
+
+function runSchemeSelftest(packPath) {
+  const lines = ['SELFTEST — the colour scheme (ruling 66)', ''];
+  let pass = true;
+  const read = () => JSON.parse(fs.readFileSync(packPath, 'utf8'));
+
+  const lightCss = emitKit(read(), { scheme: 'light' }).css;
+  const built = {};
+  for (const s of SCHEMES) built[s] = emitKit(read(), { scheme: s });
+  const remap = built.system.remap;
+
+  lines.push('  SHAPE — what each legal value emits');
+  for (const a of SCHEME_ASSERTS) {
+    const why = a.check(built[a.scheme].css, { lightCss, remap });
+    if (why) pass = false;
+    lines.push(`  ${why ? 'FAILED' : 'PASS  '}  ${a.scheme.padEnd(7)} ${a.name}${why ? `  <- ${why}` : ''}`);
+  }
+
+  lines.push('', '  DEFECTS — plant one, require the emitter to REFUSE rather than emit');
+  for (const d of SCHEME_DEFECTS) {
+    const damaged = read();
+    d.apply(damaged);
+    const r = catchingFailures(() => emitKit(damaged, { scheme: 'system' }));
+    const refused = !r.ok;
+    const rightPlace = refused && d.expect.test(r.why);
+    if (!refused || !rightPlace) pass = false;
+    lines.push(`  ${refused && rightPlace ? 'RED   ' : 'FAILED'}  ${d.name.padEnd(56)} ${refused ? (rightPlace ? 'refused, naming the right key' : `refused but for another reason: ${r.why.split('\n')[0]}`) : 'EMITTED ANYWAY — the guard is blind here'}`);
+  }
+
+  // The delta prover itself has to be tested, not just consulted. Mangle a line
+  // OUTSIDE the new blocks in a system emission and require the prover to catch
+  // it — otherwise "SCHEME DELTA: PASS" only ever means the prover ran.
+  lines.push('', '  THE DELTA PROVER — mangle a line outside the new blocks, require FAIL');
+  const clean = proveSchemeDelta(lightCss, built.system.css, 'system', remap);
+  lines.push(`  ${clean.ok ? 'PASS  ' : 'FAILED'}  control: the real system emission is a pure insertion`);
+  if (!clean.ok) pass = false;
+  const mangles = [
+    ['a body rule edited', (c) => c.replace('body{margin:0', 'body{margin:1px')],
+    ['a line deleted', (c) => c.split('\n').filter((l) => !/^img\{/.test(l)).join('\n')],
+    ['a rule appended outside both blocks', (c) => c + '.sneaked{color:red}\n']
+  ];
+  for (const [name, f] of mangles) {
+    const r = proveSchemeDelta(lightCss, f(built.system.css), 'system', remap);
+    if (r.ok) pass = false;
+    lines.push(`  ${r.ok ? 'FAILED' : 'RED   '}  ${name.padEnd(40)} ${r.ok ? 'the prover stayed GREEN — it is blind here' : `${r.removed.length} removed, ${r.changed.length} changed, ${r.outside.length} added outside`}`);
+  }
+
+  lines.push('', `  SCHEME SELFTEST: ${pass ? 'PASS — each value emits the shape ruling 66 asks for, and every planted defect was refused' : 'FAIL'}`);
+  return { pass, report: lines.join('\n') };
+}
+
 // ---------------------------------------------------------------- main
 
 function main() {
   const target = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : null;
   if (!target || has('--help') || has('-h')) {
-    console.log(`bbe kit <slug|path-to-pack> [--out <dir>] [--vault <path>] [--verify <css>] [--no-computed] [--selftest]
+    console.log(`bbe kit <slug|path-to-pack> [--out <dir>] [--vault <path>] [--verify <css>] [--no-computed] [--selftest] [--scheme light|dark|system]
 
 Emits <slug>-kit.css, fonts.html and tokens.generated.css from a brand pack.
 The pack holds the values; this emitter holds the shape. The kit is OUTPUT:
@@ -1067,7 +1579,7 @@ hand-editing a published kit breaks the wire.`);
   const pack = JSON.parse(fs.readFileSync(packPath, 'utf8'));
 
   const outDir = path.resolve(argOf('--out') || path.join('dist', 'kit'));
-  const built = emitKit(pack);
+  const built = emitKit(pack, { scheme: argOf('--scheme') });
   fs.mkdirSync(outDir, { recursive: true });
   const files = {
     [`${slug}-kit.css`]: built.css,
@@ -1079,6 +1591,7 @@ hand-editing a published kit breaks the wire.`);
   console.log(`bbe kit ${slug}`);
   console.log(`  pack   ${packPath}`);
   console.log(`  out    ${outDir}`);
+  console.log(`  scheme ${built.scheme}   (from ${built.schemeSource})`);
   for (const [name, body] of Object.entries(files)) {
     console.log(`         ${name.padEnd(22)} ${String(body.split('\n').length - 1).padStart(4)} lines  ${String(Buffer.byteLength(body)).padStart(6)} bytes`);
   }
@@ -1093,10 +1606,25 @@ hand-editing a published kit breaks the wire.`);
   if (verifyPath || wantComputed || wantSelftest) {
     if (!verifyPath) fail('--computed and --selftest both need --verify <reference css>');
     const targetCss = fs.readFileSync(path.resolve(verifyPath), 'utf8');
+
+    // HALF 1 of the proof. Level 1 always measures the LIGHT emission against the
+    // reference, whatever --scheme says, so the reproduction proof never moves.
+    const light = built.scheme === 'light' ? built : emitKit(pack, { scheme: 'light' });
     console.log('\n' + '='.repeat(78));
-    const v = verifyLevel1(built.css, targetCss);
+    console.log(`(level 1 measures the LIGHT emission. Emitted scheme: ${built.scheme}.)`);
+    const v = verifyLevel1(light.css, targetCss);
     console.log(v.report);
     if (!v.ok) bad = true;
+
+    // HALF 2. What the scheme added to that exact file, and nothing else.
+    if (built.scheme !== 'light') {
+      console.log('\n' + '='.repeat(78));
+      console.log(remapReport(built.remapProof));
+      console.log('\n' + '='.repeat(78));
+      const d = proveSchemeDelta(light.css, built.css, built.scheme, built.remap);
+      console.log(d.report);
+      if (!d.ok) bad = true;
+    }
 
     console.log('\n' + '='.repeat(78));
     console.log(gapReport(built.gaps));
@@ -1106,12 +1634,23 @@ hand-editing a published kit breaks the wire.`);
       const st = runSelftest(packPath, targetCss);
       console.log(st.report);
       if (!st.pass) bad = true;
+
+      console.log('\n' + '='.repeat(78));
+      const ss = runSchemeSelftest(packPath);
+      console.log(ss.report);
+      if (!ss.pass) bad = true;
     }
 
     if (wantComputed) {
       console.log('\n' + '='.repeat(78));
       return import('./kit-verify-computed.mjs')
-        .then((mod) => mod.run({ emittedCss: built.css, targetCss, model: built.model }))
+        .then((mod) => mod.run({
+          emittedCss: built.css,
+          targetCss,
+          model: built.model,
+          scheme: built.scheme,
+          remap: built.remap ? Object.fromEntries(built.remap) : null
+        }))
         .then((r) => {
           console.log(r.report);
           process.exit(bad || !r.ok ? 1 : 0);
