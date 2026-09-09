@@ -399,6 +399,22 @@ export function resolveScheme(m, override) {
   if (stated !== undefined && stated !== null && !SCHEMES.includes(stated)) {
     fail(`outputs.web.dark.defaultScheme is "${stated}"; ruling 66 allows exactly ${SCHEMES.join(', ')}`);
   }
+  // A brand can RULE a scheme its kit cannot safely carry yet. outputs.web.dark.emitBlocked
+  // says the emission is unsafe, never that the ruling is in doubt: DH ruled "system" on
+  // 2026-09-09 and the same day the proof showed --paper is a foreground on 15 declarations,
+  // so flipping it inverts them. Blocking in CODE, not in a doc, because a doc does not stop a
+  // build. --scheme light still works, so the safe half is never blocked.
+  const blocked = m.web.dark?.emitBlocked === true;
+  const wanted = override || stated;
+  if (blocked && wanted && wanted !== 'light') {
+    fail(
+      `outputs.web.dark.emitBlocked is true, so this brand cannot emit "${wanted}" yet.\n` +
+      `       ${m.web.dark?.emitBlockedWhy || '(no reason stated in the pack)'}\n` +
+      `       BLOCKER: ${m.web.dark?.emitBlocker?.what || 'see outputs.web.dark.emitBlocker'}\n` +
+      `       Emit --scheme light until it is ruled, or clear emitBlocked once it is fixed.`
+    );
+  }
+
   if (override) {
     if (!SCHEMES.includes(override)) fail(`--scheme must be one of ${SCHEMES.join(', ')} — got "${override}"`);
     return { scheme: override, source: `--scheme (pack says ${stated || 'nothing'})` };
