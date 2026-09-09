@@ -929,7 +929,32 @@ export function planSplit(m, componentCss, lines, remap, opts = {}) {
     accentRows.push({ selector: r.selector, was: resolve(accentVar, 'dark'), now: resolve(metaOnInk, 'dark') });
   }
 
-  return { token: OD, value: ODval, groundVar, odVar, overrides, discArrow, grounds, accentRows, resolve };
+  // ---- 4b. ruling 68 + 68c: a HOVER on a dark ground goes BRIGHT, not accent --
+  //
+  // A hover is an action affordance, and ruling 68c says every indicator moves
+  // them to action. So it has to get MORE visible on hover, never less. The
+  // accent does the opposite here: on a dark ground it measures 2.95:1, dimmer
+  // than the resting link.
+  //
+  // The answer is not the on-ink meta — that is .72 alpha against a resting link
+  // at .9, so it would still dim. It is the FOREGROUND token at full strength,
+  // and the kit already proves that is the house pattern: it ships
+  // `.on-ink .nav ul a:hover{color:var(--paper)}` against a plum hover on light.
+  // A dark PAGE is the same situation as an ink SECTION, so it gets the same
+  // answer instead of a second one.
+  const hoverRows = [];
+  for (const r of rules) {
+    if (!/:hover\b/.test(r.selector)) continue;
+    if (/\.btn/.test(r.selector)) continue;              // the button keeps the accent, ruling 65
+    const d = r.decls.find((x) => x.prop === 'color' && x.value.trim() === accentVar);
+    if (!d) continue;
+    overrides.push({ selector: r.selector, prop: 'color', from: accentVar, to: odVar, kind: 'hover',
+      why: 'ruling 68c: a hover is an action affordance, so on a dark ground it brightens rather than taking an accent that dims',
+      srcIndex: idxOf.get(r.selector) ?? 0 });
+    hoverRows.push({ selector: r.selector, was: resolve(accentVar, 'dark'), now: resolve(odVar, 'dark') });
+  }
+
+  return { token: OD, value: ODval, groundVar, odVar, overrides, discArrow, grounds, accentRows, hoverRows, resolve };
 }
 
 // ---------------------------------------------------------------- modules

@@ -257,3 +257,29 @@ been tested.
 | `<slug>-kit.css` | the whole stylesheet: `@import`, `:root`, base, every component module |
 | `fonts.html` | the `<head>` snippet that loads the brand's fonts, from `outputs.web.fontLoad` |
 | `tokens.generated.css` | the `:root{}` block alone, for a consumer that wants tokens without components |
+
+
+## KNOWN INSTABILITY: Level 2 is not perfectly repeatable (observed 2026-09-09)
+
+`LEVEL 2 (light)` returned **FAIL, 1 disagreement** once, then **PASS on the next five consecutive
+runs** with the input completely unchanged. Roughly 1 in 6.
+
+**It is the verifier, not the emitter, and that is provable rather than assumed.** The light
+emission was byte-identical across the change being tested at the time, sha
+`70428d42b74dd947dadcc44077aa7935a7e6397d57a4212fbd955bae873f19ef`, so nothing about the CSS
+moved between the failing run and the passing ones. The instability is in the measurement.
+
+**The cause is NOT known.** The obvious suspect is already handled: `kit-verify-computed.mjs`
+awaits `document.fonts.ready` after `networkidle0` on both pages before measuring. Whatever wobbles
+is something else, and nobody has caught it in the act, because the failing run did not print which
+property disagreed before it was re-run.
+
+**Why this matters more than a flaky test usually would.** Level 2 is the proof the entire kit
+emitter rests on. A checker that produces a false FAIL 1 time in 6 can produce a false PASS too,
+and the direction nobody notices is the dangerous one. Until this is understood:
+
+- **A single green Level 2 run is not proof.** Run it at least 3 times and require all of them.
+- **Never dismiss a FAIL as "probably the flake."** Capture which property disagreed, on which
+  element, in both renders, before re-running. That output is the only lead anyone will get.
+- The fix likely starts by making a failing run dump its disagreement to a file automatically, so
+  the next occurrence is diagnosable instead of gone.
