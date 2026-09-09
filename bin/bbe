@@ -10,6 +10,7 @@
 //   npx @andrew22lane/bbe tokens --pack brand/<slug>.brandpack.json --out src/tokens.generated.js
 //   npx @andrew22lane/bbe verify-byte-identity <dirA> <dirB>
 //   npx @andrew22lane/bbe gate-lint --brand bex
+//   npx @andrew22lane/bbe brief <brand> [--vault <path>] [--out <dir>] [--stdout] [--json]
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -25,7 +26,8 @@ const COMMANDS = {
   tokens: path.join(HERE, '..', 'tools', 'build-tokens.mjs'),
   'gate-lint': path.join(HERE, '..', 'tools', 'gate-lint.mjs'),
   'brand-drift': path.join(HERE, '..', 'tools', 'brand-drift.mjs'),
-  'verify-byte-identity': path.join(HERE, '..', 'tools', 'verify-byte-identity.mjs')
+  'verify-byte-identity': path.join(HERE, '..', 'tools', 'verify-byte-identity.mjs'),
+  brief: path.join(HERE, '..', 'tools', 'build-brief.mjs')
 };
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -38,6 +40,7 @@ if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
   console.log('  bbe gate-lint             the seven-check vault gate');
   console.log('  bbe brand-drift           the drift scanner on its own');
   console.log('  bbe verify-byte-identity  prove two build trees are identical');
+  console.log('  bbe brief <brand>         load a brand pack + vault into one BRIEF-<brand>-<date>.md');
   console.log('\nEach one takes --help.');
   process.exit(cmd ? 0 : 1);
 }
