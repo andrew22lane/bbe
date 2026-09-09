@@ -322,7 +322,7 @@ function emitTokens(m) {
   const meta = resolveMetaLight(m);
   if (meta.derived) {
     m.gaps.push({
-      key: 'outputs.web.dark.onLightText.meta (or an equivalent on-light text block)',
+      key: 'outputs.web.onLightText.meta (read from outputs.web.light.onLightText or outputs.web.onLightText)',
       want: `the value for the metaText role ${m.roles.metaText}; the pack names the role but states no value`,
       using: `${meta.value}, derived from ${meta.rule} after proving the rule on the pack's other three members`
     });
@@ -429,16 +429,22 @@ MODULES.button = (m) => {
     });
   }
   const st = { ...rawStates, primary: rawStates[primaryKey] };
-  // The primary state's hover.arrow is one prose field carrying two values. Split it
-  // rather than invent either half; if it stops parsing, stop.
-  const hoverArrow = String(st.primary.hover.arrow || '');
-  const arrowColor = (hoverArrow.match(/var\(--[\w-]+\)/) || [])[0];
-  const arrowTravel = (hoverArrow.match(/translateX\([^)]*\)/) || [])[0];
+  // Pack 2.3.0 split hover.arrow into arrowColor + arrowTravel, which is what this
+  // emitter asked for. Prefer the real fields; fall back to parsing the old prose so a
+  // brand pack still on the single `arrow` string keeps emitting. If NEITHER shape is
+  // present, stop rather than invent half a hover.
+  let arrowColor = st.primary.hover.arrowColor;
+  let arrowTravel = st.primary.hover.arrowTravel;
   if (!arrowColor || !arrowTravel) {
-    fail('outputs.web.button.states.<primary>.hover.arrow no longer carries both a colour and a travel; split it into arrowColor and arrowTravel in the pack');
+    const hoverArrow = String(st.primary.hover.arrow || '');
+    arrowColor = arrowColor || (hoverArrow.match(/var\(--[\w-]+\)/) || [])[0];
+    arrowTravel = arrowTravel || (hoverArrow.match(/translateX\([^)]*\)/) || [])[0];
+    if (!arrowColor || !arrowTravel) {
+      fail('outputs.web.button.states.<primary>.hover needs arrowColor and arrowTravel (or a legacy .arrow string carrying both)');
+    }
+    o(`button.states.${primaryKey}.hover.arrowColor`, arrowColor, 'the hover arrow colour as its own field, parsed out of the legacy .arrow prose');
+    o(`button.states.${primaryKey}.hover.arrowTravel`, arrowTravel, 'the hover arrow travel as its own field, parsed out of the legacy .arrow prose');
   }
-  o(`button.states.${primaryKey}.hover.arrowColor`, arrowColor, 'the hover arrow colour as its own field (today it is prose inside .arrow)');
-  o(`button.states.${primaryKey}.hover.arrowTravel`, arrowTravel, 'the hover arrow travel as its own field (today it is prose inside .arrow)');
 
   const circTr = `transform ${m.D('buttonLift')} ${m.E('eo')},box-shadow ${m.D('buttonLift')} ${m.E('eo')}`;
   const arrowTr = `stroke ${o('components.button.arrowStrokeDuration', '.3s', 'how long the arrow stroke colour takes')},transform ${m.D('buttonLift')} ${m.E('eo')}`;
