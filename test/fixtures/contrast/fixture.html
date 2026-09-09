@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>bbe contrast — planted defects</title>
+<link rel="stylesheet" href="fixture.css">
+</head>
+<body>
+<main>
+  <section id="halfwired">Half-wired: the ink flips in dark, the slab under it does not. Contrast survives, the wiring does not.</section>
+  <section id="lowcontrast">Low contrast: both tokens flip correctly, and both pairs are too close to read.</section>
+  <section id="control">Control: both tokens flip, both pairs are legible. This one must stay clean.</section>
+  <section id="blindspots">
+    <!-- CONTROL 2: a sprite reference. Its own computed fill is the CSS
+         initial black; the ink is drawn by the symbol, in another document.
+         Must be counted as unmeasured, never flagged. -->
+    <svg class="gl" width="24" height="24"><use href="fixture-sprite.svg#g-tick"></use></svg>
+    <!-- CONTROL 3: screen-reader-only text. No sighted reader sees it, so its
+         contrast is not a finding. Must be skipped. -->
+    <span class="sr">Search everything you own</span>
+  </section>
+  <section>
+    <span id="arrowwell">
+      <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <path d="M3 9h11M9.5 4.5 14 9l-4.5 4.5" stroke="currentColor" fill="none"/>
+      </svg>
+    </span>
+  </section>
+</main>
+</body>
+</html>

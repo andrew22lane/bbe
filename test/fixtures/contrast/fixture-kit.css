@@ -1,0 +1,17 @@
+/* An IMPORTED sheet, pulled in by fixture.css with @import.
+ *
+ * document.styleSheets lists only top-level sheets, so a scanner that does not
+ * walk import rules cannot see any of this. The Club imports the DH brand kit
+ * exactly this way, and the rule that decides its card text lives in the kit,
+ * so the first version of this tool attributed a real failure to the wrong rule
+ * in the wrong file. Hence: DEFECT 3 lives in here on purpose.
+ */
+
+/* DEFECT 3 — the Club's arrow. --well flips to a pale value in dark,
+   --glyph does not, so a paper stroke lands on a paper disc. */
+#arrowwell {
+  width: 36px; height: 36px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--well);
+}
+#arrowwell svg { width: 18px; height: 18px; display: block; color: var(--glyph); }

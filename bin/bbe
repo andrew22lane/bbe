@@ -10,6 +10,7 @@
 //   npx @andrew22lane/bbe tokens --pack brand/<slug>.brandpack.json --out src/tokens.generated.js
 //   npx @andrew22lane/bbe verify-byte-identity <dirA> <dirB>
 //   npx @andrew22lane/bbe gate-lint --brand bex
+//   npx @andrew22lane/bbe contrast <url|file|glob> [--scheme both] [--json out.json]
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -24,6 +25,7 @@ const COMMANDS = {
   gate: path.join(HERE, 'bbe-gate'),
   tokens: path.join(HERE, '..', 'tools', 'build-tokens.mjs'),
   'gate-lint': path.join(HERE, '..', 'tools', 'gate-lint.mjs'),
+  contrast: path.join(HERE, '..', 'tools', 'contrast-scan.mjs'),
   'brand-drift': path.join(HERE, '..', 'tools', 'brand-drift.mjs'),
   'verify-byte-identity': path.join(HERE, '..', 'tools', 'verify-byte-identity.mjs')
 };
@@ -36,6 +38,7 @@ if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
   console.log('  bbe gate                  the brand gate for the current repo (bbe-gate)');
   console.log('  bbe tokens                generate tokens.generated.js from a pack');
   console.log('  bbe gate-lint             the seven-check vault gate');
+  console.log('  bbe contrast              scan a rendered page for light/dark colour failures');
   console.log('  bbe brand-drift           the drift scanner on its own');
   console.log('  bbe verify-byte-identity  prove two build trees are identical');
   console.log('\nEach one takes --help.');

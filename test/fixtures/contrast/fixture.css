@@ -1,0 +1,61 @@
+@import url("fixture-kit.css");
+
+/* The self-test's planted defects. A linked sheet on purpose: file:// blocks
+   the page from reading its own linked CSS, so this also exercises the
+   fetch-it-from-node fallback that keeps token names in the report. */
+
+:root {
+  --page-bg:  #FBF7F9;
+  --page-ink: #1A0A14;
+
+  /* DEFECT 1 — half-wired, and the contrast SURVIVES in both schemes.
+     --plank gets a dark value, --slab does not. Nothing looks broken; the
+     wiring is broken. This is the case a contrast-only checker cannot see. */
+  --plank: #FFFFFF;
+  --slab:  #6A1030;
+
+  /* DEFECT 2 — a genuine low-contrast pair, correctly wired.
+     Both tokens flip, so it must land in CONTRAST and NOT in HALF-WIRED. */
+  --pale-fg: #B9B2B6;
+  --pale-bg: #EFEAEC;
+
+  /* DEFECT 3 — the Club's arrow. --well flips to a pale value in dark,
+     --glyph does not, so a paper stroke lands on a paper disc. */
+  --well:  #1A0A14;
+  --glyph: #FBF7F9;
+
+  /* CONTROL — both sides flip. Must stay clean in both categories. */
+  --ok-fg: #1A0A14;
+  --ok-bg: #FBF7F9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page-bg:  #151517;
+    --page-ink: #FBF7F9;
+    --plank:    #F2E9EE;   /* --slab deliberately absent */
+    --pale-fg:  #5A5458;
+    --pale-bg:  #3B3639;
+    --well:     #FBF7F9;   /* --glyph deliberately absent */
+    --ok-fg:    #FBF7F9;
+    --ok-bg:    #151517;
+  }
+}
+
+html, body { margin: 0; background: var(--page-bg); color: var(--page-ink); font: 16px/1.5 system-ui, sans-serif; }
+main { padding: 24px; display: grid; gap: 18px; }
+section { padding: 16px; border-radius: 10px; }
+
+#halfwired   { color: var(--plank);  background: var(--slab); }
+#lowcontrast { color: var(--pale-fg); background: var(--pale-bg); }
+#control     { color: var(--ok-fg);   background: var(--ok-bg); }
+
+/* DEFECT 3 lives in the imported sheet, see the @import at the top. */
+
+/* CONTROL 2 + 3. Neither may produce a finding. The sprite's ink lives in the
+   referenced symbol; the .sr label is clipped to nothing. */
+#blindspots { background: var(--ok-bg); }
+#blindspots .gl { color: var(--ok-bg); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+      color: var(--ok-bg); }

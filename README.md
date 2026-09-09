@@ -16,6 +16,7 @@ of copy.
 | `tools/gate-lint.mjs` | The gate. Seven checks; five delegate to a gate that already exists. `bbe-gate` on the CLI. |
 | `tools/brand-drift.mjs` | The scanner `gate-lint` calls. Counts hardcoded brand facts in a repo against a pack. |
 | `tools/build-tokens.mjs` | Generates `src/tokens.generated.js` from a brand pack's `outputs.web`. `bbe-tokens` on the CLI. |
+| `tools/contrast-scan.mjs` | `bbe contrast`. Renders a page in BOTH colour schemes in a real browser and finds light/dark colour failures: WCAG contrast, and the half-wired detector. Its in-page half is `tools/contrast-page.js`. |
 | `tools/verify-byte-identity.mjs` | Walks two build trees, sha256s every file, exits 1 on any difference. The proof every migration ships with. |
 | `bin/bbe-new-surface` | The scaffold. Writes a new site or worker that reads a brand pack for every colour and has the gate in CI at a baseline of zero. `bbe new-surface` on the CLI. |
 | `bin/bbe-gate` | The repo gate a consumer runs in CI: the drift scan plus the ratchet against its own `bbe.config.json`. Installed, never copied. `bbe-gate` on the CLI. |
@@ -25,6 +26,60 @@ of copy.
 
 Brand packs still live in the vault (`dh-hub/vault/core/brand-packs/`). Phase 2
 moves them in here so a brand change becomes a versioned release.
+
+## `bbe contrast`
+
+```
+bbe contrast <url|file|glob> [--scheme light|dark|both] [--viewport 1440x1000]
+                             [--json <out>] [--fail-on contrast|halfwired|both|none]
+```
+
+A grep cannot find these. The failure is a token that flips in one scheme and
+not the other, so the defect only exists in the computed cascade, in one
+scheme. The only instrument that can see it is a real engine rendering the page
+twice. Puppeteer, both schemes, computed styles.
+
+**Check A, contrast.** WCAG 2.1 ratio, per scheme. 4.5:1 for normal text, 3:1
+for large text and for graphical objects. Text AND svg `stroke`/`fill`, because
+the near-invisible arrows on the Club are a stroke and a text-only checker walks
+straight past them.
+
+**Check B, half-wired.** The same element compared across the two schemes. If
+the foreground moved and the background did not, or the reverse, a token got a
+dark value and its partner did not. It fires even when the contrast survives,
+which is what makes it a gate rather than a spot check.
+
+Findings are grouped **by root cause**. One bad rule that hits 2,472 nodes reads
+as one finding naming the rule, the token and the count. Multi-page runs add a
+rollup that collapses the same cause across pages and ranks by element count.
+
+Exit code is 0 unless `--fail-on` names a category that produced findings, so it
+can run before anyone has fixed anything.
+
+### What it knows it cannot see
+
+- A `background-image` or gradient anywhere in the background stack is reported
+  UNKNOWN, never averaged into a number that might pass.
+- `<use>` sprite references are counted and reported as unmeasured. The ink is
+  drawn by the referenced symbol, in another document, unreachable from
+  `querySelectorAll`. Measuring the `<use>` element's own initial black
+  reported the Club's glyph covers as failing when they are fine.
+- Rule attribution is best-effort cascade: highest specificity, then last in
+  document order, inline style first, state selectors (`:hover`) only as a last
+  resort because nothing is hovered in a headless render.
+
+### Self-test
+
+```
+node test/contrast.mjs
+```
+
+Plants a half-wired token whose contrast survives, a genuine low-contrast pair
+that is correctly wired, an svg stroke that vanishes in dark inside an
+`@import`-ed sheet, a correctly-wired control, a `<use>` sprite and a
+screen-reader-only label, then asserts each lands in its own category and the
+three clean ones stay clean. A detector that has only ever returned clean has
+not been tested.
 
 ## Why the scope is `@andrew22lane` and not `@designhacker`
 

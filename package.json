@@ -21,7 +21,8 @@
     "bbe-new-surface": "bin/bbe-new-surface",
     "bbe-gate": "bin/bbe-gate",
     "bbe-gate-lint": "tools/gate-lint.mjs",
-    "bbe-tokens": "tools/build-tokens.mjs"
+    "bbe-tokens": "tools/build-tokens.mjs",
+    "bbe-contrast": "tools/contrast-scan.mjs"
   },
   "files": [
     "bin/",
@@ -32,5 +33,8 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "puppeteer": "^25.10.0"
   }
 }
