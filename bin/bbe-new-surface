@@ -132,6 +132,14 @@ const DIR = path.resolve(argOf('--dir') || path.join(os.homedir(), 'dh-work', NA
 const ENGINE_SPEC = argOf('--engine') || `github:andrew22lane/bbe#v${PKG.version}`;
 const BRAND_NAME = pack?.outputs?.web?.identity?.name || pack?.meta?.name || SLUG;
 
+// ONE-SYSTEM-LAW: a brand with a kit gets it wired in on day one, never bolted
+// on after eight surfaces have each hand-typed their own button. The pack's own
+// outputs.web.kit wins; --kit is the escape hatch for a pack that has not been
+// updated yet.
+const KIT_FROM_PACK = pack?.outputs?.web?.kit;
+const KIT_URL = argOf('--kit') || (typeof KIT_FROM_PACK === 'string' ? KIT_FROM_PACK : KIT_FROM_PACK?.url) || null;
+const KIT_VERSION = (typeof KIT_FROM_PACK === 'object' && KIT_FROM_PACK?.version) || null;
+
 // ---------------------------------------------------------------- templates
 
 function gitignore() {
@@ -150,12 +158,20 @@ function gitignore() {
 }
 
 function bbeConfig() {
-  return JSON.stringify({
+  const cfg = {
     pack: SLUG,
     exclude: [],
     baseline: 0,
     note: `Ratchet, not a target. \`npx bbe-gate\` fails only when the BRAND count (scanned against this repo's own brand/${SLUG}.brandpack.json mirror) rises above "baseline". Scaffolded by @andrew22lane/bbe ${PKG.version} new-surface at zero, because a surface that starts on the engine and reads every colour from the pack has nothing to count. "exclude" is ADDITIVE to the gate's defaults (node_modules, .git, dist, dot-paths, tools) and should match this repo's row in vault/core/engine/estate.json, so the CI number and the nightly number are the same number. Lower "baseline" with \`npx bbe-gate --write-baseline\`; if it ever needs raising, something typed a brand fact into code and that is the bug, not this file.`
-  }, null, 2) + '\n';
+  };
+  if (KIT_URL) {
+    cfg.kit = { url: KIT_URL, ...(KIT_VERSION ? { version: KIT_VERSION } : {}) };
+  }
+  return JSON.stringify(cfg, null, 2) + '\n';
+}
+
+function surfaceCss() {
+  return `/* Surface-specific rules only. Reserved tokens and components live in the kit. */\n`;
 }
 
 function packParity() {
@@ -317,6 +333,11 @@ const __dir = path.dirname(fileURLToPath(import.meta.url));
 const OUT = process.env.OUT || 'dist';
 const BUILD = process.env.BUILD_ID || '1';
 
+// ONE-SYSTEM-LAW: the kit, if this brand has one, links FIRST — before this
+// page's own <style> block. bbe-gate's kit check fails the build the moment
+// that stops being true. See vault/core/ONE-SYSTEM-LAW.md.
+const KIT_URL = ${JSON.stringify(KIT_URL)};
+
 // ---- the brand record ----
 const { slug, file, pack } = resolvePack(path.join(__dir, 'brand'), '${SLUG}', fs, path);
 const WEB = pack.outputs.web;
@@ -339,7 +360,7 @@ const eng = createEngine({
   themeColor: WEB.identity?.themeColor || ROLES.inkValue,
   ogSiteName: NAME,
   ogDefault: \`\${SITE}\${BASE}/assets/og-default.png\`,
-  cssHead: () => \`<style>\${CSS}</style>\`
+  cssHead: () => (KIT_URL ? \`<link rel="stylesheet" href="\${KIT_URL}">\` : '') + \`<style>\${CSS}</style>\`
 });
 
 // ---- the page ----
@@ -365,7 +386,7 @@ const html = eng.page({
   canonical: eng.abs(''),
   body,
   shell: 'bare',
-  bare: { mainAttrs: ' class="wrap"' }
+  bare: { mainAttrs: ' class="wrap"', bodyAttrs: ' class="surface-body"' }
 });
 
 fs.rmSync(OUT, { recursive: true, force: true });
@@ -391,14 +412,14 @@ function siteCss() {
 
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
-body{
+.surface-body{
   margin:0;
   background:var(--bbe-starter-ground);
   color:var(--bbe-starter-ink);
   font:16px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif;
 }
 .wrap{max-width:56rem;margin:0 auto;padding:clamp(1.5rem,5vw,4rem) 1.25rem}
-h1{margin:0 0 .5rem;font-size:clamp(1.9rem,6vw,3rem);line-height:1.1;letter-spacing:-.02em}
+.wrap h1{margin:0 0 .5rem;font-size:clamp(1.9rem,6vw,3rem);line-height:1.1;letter-spacing:-.02em}
 .lede{margin:0 0 2rem;font-size:1.075rem;max-width:44ch}
 .note{margin-top:2rem;font-size:.9rem;opacity:.75;max-width:60ch}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
@@ -471,10 +492,10 @@ import { cssVarName } from '@andrew22lane/bbe/tools/starter-tokens.mjs';
 
 const STRUCTURE = \`
 *,*::before,*::after{box-sizing:border-box}
-body{margin:0;background:var(--bbe-starter-ground);color:var(--bbe-starter-ink);
+.surface-body{margin:0;background:var(--bbe-starter-ground);color:var(--bbe-starter-ink);
   font:16px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif}
 .wrap{max-width:56rem;margin:0 auto;padding:clamp(1.5rem,5vw,4rem) 1.25rem}
-h1{margin:0 0 .5rem;font-size:clamp(1.9rem,6vw,3rem);line-height:1.1;letter-spacing:-.02em}
+.wrap h1{margin:0 0 .5rem;font-size:clamp(1.9rem,6vw,3rem);line-height:1.1;letter-spacing:-.02em}
 p{max-width:60ch}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
 ul{list-style:none;margin:0;padding:0;display:grid;gap:.5rem;
@@ -493,6 +514,12 @@ const esc = (s) => String(s == null ? '' : s)
 // The brand's own name, out of the pack. Never typed here.
 const BRAND = TOKENS.identity?.name || '${NAME}';
 
+// ONE-SYSTEM-LAW: the kit, if this brand has one, links FIRST — before this
+// page's own <style> block. bbe-gate's kit check fails the build the moment
+// that stops being true. See vault/core/ONE-SYSTEM-LAW.md.
+const KIT_URL = ${JSON.stringify(KIT_URL)};
+const KIT_LINK = KIT_URL ? \`<link rel="stylesheet" href="\${KIT_URL}">\` : '';
+
 const swatches = Object.entries(TOKENS.light)
   .map(([k, v]) => \`<li><i style="background:var(\${cssVarName(k)})"></i><b>\${esc(k)}</b><code>\${esc(v)}</code></li>\`)
   .join('');
@@ -501,8 +528,8 @@ const PAGE = \`<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>\${esc(BRAND)}</title>
 <meta name="robots" content="noindex, nofollow">
-<style>\${TOKENS_CSS}\${STRUCTURE}</style>
-</head><body><main class="wrap">
+\${KIT_LINK}<style>\${TOKENS_CSS}\${STRUCTURE}</style>
+</head><body class="surface-body"><main class="wrap">
 <h1>\${esc(BRAND)}</h1>
 <p>A new Worker surface on the Brand Builder Engine. Nothing in <code>src/index.js</code>
 holds a colour: every swatch below is a custom property generated from
@@ -650,6 +677,7 @@ if (KIND === 'site') {
     'package.json': sitePackageJson(),
     'build.mjs': siteBuild(),
     'site.css': siteCss(),
+    'src/surface.css': surfaceCss(),
     'README.md': readme(),
     '.gitignore': gitignore(),
     '.node-version': '20\n',
@@ -663,6 +691,7 @@ if (KIND === 'site') {
     'package.json': workerPackageJson(),
     'wrangler.toml': wranglerToml(),
     'src/index.js': workerIndex(),
+    'src/surface.css': surfaceCss(),
     'README.md': readme(),
     '.gitignore': gitignore(),
     '.node-version': '20\n',

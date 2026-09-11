@@ -50,6 +50,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { scanRepo, DEFAULT_EXCLUDE } from '../tools/brand-drift.mjs';
+import { scanKit } from '../tools/kit-drift.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DRIFT = path.join(HERE, '..', 'tools', 'brand-drift.mjs');
@@ -137,6 +138,14 @@ if (typeof config.baseline !== 'number' || !Number.isFinite(config.baseline) || 
 if (config.exclude != null && (!Array.isArray(config.exclude) || config.exclude.some((e) => typeof e !== 'string'))) {
   die(`${configSource} "exclude" must be an array of strings, additive to the defaults`);
 }
+if (config.kit != null) {
+  if (typeof config.kit !== 'object' || Array.isArray(config.kit)) {
+    die(`${configSource} "kit" must be an object: { "url": "...", "kitLocal": "...", "reserved": [...] }`);
+  }
+  if (!config.kit.url && !config.kit.kitLocal) {
+    die(`${configSource} "kit" needs a "url" or a "kitLocal" path — see ONE-SYSTEM-LAW.md`);
+  }
+}
 
 const packPath = path.join(repoRoot, 'brand', `${config.pack}.brandpack.json`);
 if (!existsSync(packPath)) {
@@ -161,9 +170,17 @@ if (scan.scanned === 0) {
 const rose = scan.brand.length > config.baseline;
 const fell = scan.brand.length < config.baseline;
 
+// ---------------------------------------------------------------- the kit scan
+// No ratchet here. brand-drift's baseline exists because a repo migrating onto
+// the gate needs a runway to zero; a kit violation has no such runway — it is a
+// surface defining its own button, its own font, its own primary colour, which
+// is the exact drift ONE-SYSTEM-LAW.md exists to end. Any hit fails.
+const kitResult = config.kit ? scanKit(repoRoot, config.kit, { exclude: config.exclude || [] }) : null;
+const kitFailed = !!(kitResult && kitResult.hits.length > 0);
+
 if (JSON_OUT) {
   console.log(JSON.stringify({
-    ok: !rose,
+    ok: !rose && !kitFailed,
     tool: `@andrew22lane/bbe ${PKG.version}`,
     repo: scan.repo,
     config: configSource,
@@ -177,9 +194,15 @@ if (JSON_OUT) {
     baseline: config.baseline,
     unregistered: scan.unregistered.length,
     unregisteredUnique: scan.unregisteredUnique,
-    hits: scan.brand
+    hits: scan.brand,
+    kit: kitResult ? {
+      checked: true,
+      filesChecked: kitResult.filesChecked,
+      hits: kitResult.hits.length,
+      violations: kitResult.hits
+    } : { checked: false }
   }, null, 2));
-  process.exit(rose ? 1 : 0);
+  process.exit((rose || kitFailed) ? 1 : 0);
 }
 
 say(`brand gate — pack ${config.pack}  (@andrew22lane/bbe ${PKG.version} bbe-gate)`);
@@ -194,6 +217,14 @@ for (const b of scan.brand.slice(0, 60)) {
 }
 if (scan.brand.length > 60) say(`    ...and ${scan.brand.length - 60} more`);
 say(`  UNREGISTERED (warn only): ${scan.unregistered.length} hits, ${scan.unregisteredUnique} unique`);
+
+// ---------------------------------------------------------------- the kit report
+if (kitResult) {
+  say('');
+  say(`  kit check    ${config.kit.url || config.kit.kitLocal}  (${kitResult.filesChecked} files checked)`);
+  for (const h of kitResult.hits) say(`  KIT: ${h.file}:${h.line} ${h.reason}`);
+  say(`  KIT hits: ${kitResult.hits.length}`);
+}
 
 // ---------------------------------------------------------------- --write-baseline
 if (has('--write-baseline')) {
@@ -222,12 +253,18 @@ if (has('--write-baseline')) {
   process.exit(0);
 }
 
+if (kitFailed) {
+  console.log('');
+  console.log(`FAIL: ${kitResult.hits.length} KIT hit(s). Every surface links the kit first and defines none of its own reserved tokens. See vault/core/ONE-SYSTEM-LAW.md.`);
+}
+
 if (rose) {
   console.log('');
   console.log(`FAIL: BRAND count rose from ${config.baseline} to ${scan.brand.length}.`);
   console.log(`The baseline ratchets DOWN only — never raise "baseline" in ${CONFIG_NAME} by hand.`);
-  process.exit(1);
 }
+
+if (rose || kitFailed) process.exit(1);
 
 if (fell) {
   say('');

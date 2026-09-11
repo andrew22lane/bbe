@@ -59,5 +59,8 @@ jobs:
       - name: brand-drift selftest
         run: node bin/bbe-gate --selftest
 
+      - name: kit-drift check (ONE-SYSTEM-LAW)
+        run: node test/kit-check.mjs
+
       - name: new-surface smoke test (site + worker, scaffold to gate)
         run: node test/smoke.mjs
