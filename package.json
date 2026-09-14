@@ -12,6 +12,9 @@
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
+  "scripts": {
+    "test": "node test/kit-check.mjs && node test/smoke.mjs"
+  },
   "exports": {
     "./engine": "./engine/lib.mjs",
     "./tools/*": "./tools/*"

@@ -8,7 +8,10 @@
 //   2. a local `.btn` -> fails, with the right line
 //   3. the kit link missing entirely -> fails
 //   4. a `--foo-`-prefixed token -> passes (not reserved)
-//   5. `kitLocal` (the repo that BUILDS the kit) -> works, kit file itself exempt
+//   5. `local` (the repo that BUILDS the kit) -> works, kit file itself exempt
+//   6. no kit config at all -> skip, zero hits, zero files checked (the gate's own
+//      one-line warning is asserted end to end in test/smoke.mjs, since printing it
+//      is bin/bbe-gate's job, not scanKit's)
 //
 // Same shape as brand-drift.mjs's own selftest: build a throwaway fixture repo,
 // call the scanner directly, assert on its return value. No CLI, no gate — that
@@ -116,8 +119,23 @@ console.log('\n  kit-drift.mjs — kit-check\n');
 <link rel="stylesheet" href="/kit/fixture-kit-v1.css">
 </head><body></body></html>`);
   fx.write('surface.css', `.hero{padding:2rem}\n`);
-  const r = scanKit(fx.dir, { kitLocal: 'kit/fixture-kit-v1.css' }, {});
-  probe('case 5: kitLocal accepted as the link target, kit file itself exempt -> zero hits', r.hits.length === 0);
+  const r = scanKit(fx.dir, { local: 'kit/fixture-kit-v1.css' }, {});
+  probe('case 5: local accepted as the link target, kit file itself exempt -> zero hits', r.hits.length === 0);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 6
+{
+  const fx = fixture();
+  fx.write('index.html', `<!doctype html><html><head>
+<link rel="stylesheet" href="/surface.css">
+</head><body></body></html>`);
+  fx.write('surface.css', `.hero{padding:2rem}\n.btn{background:#fff}\n:root{--primary:#1c5e62}\n`);
+  const noConfig = scanKit(fx.dir, null, {});
+  probe('case 6a: no kit config -> zero hits (skip, not a scan)', noConfig.hits.length === 0);
+  probe('case 6a: no kit config -> zero files checked', noConfig.filesChecked === 0);
+  const emptyKit = scanKit(fx.dir, {}, {});
+  probe('case 6b: an empty kit object (no url, no local) behaves the same as null', emptyKit.hits.length === 0 && emptyKit.filesChecked === 0);
   rmSync(fx.dir, { recursive: true, force: true });
 }
 

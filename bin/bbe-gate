@@ -140,10 +140,10 @@ if (config.exclude != null && (!Array.isArray(config.exclude) || config.exclude.
 }
 if (config.kit != null) {
   if (typeof config.kit !== 'object' || Array.isArray(config.kit)) {
-    die(`${configSource} "kit" must be an object: { "url": "...", "kitLocal": "...", "reserved": [...] }`);
+    die(`${configSource} "kit" must be an object: { "url": "...", "local": "...", "reserved": [...] }`);
   }
-  if (!config.kit.url && !config.kit.kitLocal) {
-    die(`${configSource} "kit" needs a "url" or a "kitLocal" path — see ONE-SYSTEM-LAW.md`);
+  if (!config.kit.url && !config.kit.local) {
+    die(`${configSource} "kit" needs a "url" or a "local" path — see ONE-SYSTEM-LAW.md`);
   }
 }
 
@@ -154,7 +154,13 @@ if (!existsSync(packPath)) {
   ]);
 }
 
-const exclude = [...DEFAULT_EXCLUDE, ...EXTRA_EXCLUDE, ...(config.exclude || [])];
+// kit.local is the kit FILE itself, the one place ONE-SYSTEM-LAW.md says the brand's raw
+// hex is allowed to live. It is exempt from the hex ratchet automatically, the moment a
+// repo names it here — a consumer no longer types "kit" (or the kit's own path) into
+// "exclude" by hand to get the same effect. Every one of the seven 2026-09-13 kit mints
+// needed that manual exclude before this; this is the fix so the next one does not.
+const kitLocalExclude = (config.kit && config.kit.local) ? [config.kit.local.replace(/^\.?\//, '')] : [];
+const exclude = [...DEFAULT_EXCLUDE, ...EXTRA_EXCLUDE, ...(config.exclude || []), ...kitLocalExclude];
 
 // ---------------------------------------------------------------- the scan
 // Positional call, the same exported function vault/core/engine/estate-status.mjs
@@ -211,6 +217,7 @@ say(`  config       ${path.relative(repoRoot, configSource) || configSource}`);
 say(`  scanned      ${scan.scanned} of ${scan.files} files`);
 say(`  pack colours ${scan.packColours}`);
 if (config.exclude && config.exclude.length) say(`  also excluded ${config.exclude.join(', ')}`);
+if (kitLocalExclude.length) say(`  kit file exempt from the hex ratchet: ${kitLocalExclude.join(', ')}`);
 say(`  BRAND hits: ${scan.brand.length}  (baseline: ${config.baseline})`);
 for (const b of scan.brand.slice(0, 60)) {
   say(`    ${b.file}:${b.line}  ${b.literal}  -> ${b.packName}`);
@@ -221,9 +228,14 @@ say(`  UNREGISTERED (warn only): ${scan.unregistered.length} hits, ${scan.unregi
 // ---------------------------------------------------------------- the kit report
 if (kitResult) {
   say('');
-  say(`  kit check    ${config.kit.url || config.kit.kitLocal}  (${kitResult.filesChecked} files checked)`);
+  say(`  kit check    ${config.kit.url || config.kit.local}  (${kitResult.filesChecked} files checked)`);
   for (const h of kitResult.hits) say(`  KIT: ${h.file}:${h.line} ${h.reason}`);
   say(`  KIT hits: ${kitResult.hits.length}`);
+} else {
+  // No "kit" object at all: a repo whose brand has none yet keeps passing, not going
+  // dark silently. One line, machine-checkable, never a FAIL.
+  say('');
+  say(`  kit check    skipped — no "kit" in ${CONFIG_NAME} (see vault/core/ONE-SYSTEM-LAW.md)`);
 }
 
 // ---------------------------------------------------------------- --write-baseline

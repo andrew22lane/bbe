@@ -16,14 +16,14 @@
  *   {
  *     "url": "https://cdn.brandbuilderengine.com/<brand>/kit/<brand>-kit-v<N>.css",
  *     "version": "1",
- *     "kitLocal": "kit/bex-kit-v1.css",   // optional: the repo that BUILDS the kit
+ *     "local": "kit/bex-kit-v1.css",   // optional: the repo that BUILDS the kit
  *     "reserved": [ ... ]                  // optional: overrides DEFAULT_KIT_RESERVED
  *   }
  *
- * `kitLocal` is for the one repo per brand that builds the kit file (bex-site
+ * `local` is for the one repo per brand that builds the kit file (bex-site
  * builds bex-kit-v1.css). Its own pages reference the kit by a local/relative
- * path, not the CDN URL, so `kitLocal` is accepted as an equivalent link target,
- * and the file at `kitLocal` is exempt from the reserved-token check below (it
+ * path, not the CDN URL, so `local` is accepted as an equivalent link target,
+ * and the file at `local` is exempt from the reserved-token check below (it
  * IS the kit; the kit is allowed to define what it hands out).
  *
  * TWO CHECKS.
@@ -32,7 +32,7 @@
  *     file whose text contains `<head` or a `<link rel="stylesheet"` tag), is
  *     read for its stylesheet references in document order: `<link
  *     rel="stylesheet" href="...">` and `@import url("...")`. The kit
- *     (`url` or `kitLocal`) must be the FIRST one. A page with zero stylesheet
+ *     (`url` or `local`) must be the FIRST one. A page with zero stylesheet
  *     references and no embedded kit URL string is also a miss — it built
  *     without the kit at all.
  *
@@ -127,17 +127,17 @@ function collectCssRegions(text, ext) {
  * Scan a repo for kit violations.
  *
  * @param {string} repoRoot
- * @param {{url?:string, kitLocal?:string, reserved?:string[]}|null} kitConfig
+ * @param {{url?:string, local?:string, reserved?:string[]}|null} kitConfig
  * @param {{exclude?: string[]}} opts  ADDITIVE to brand-drift's DEFAULT_EXCLUDE.
  */
 export function scanKit(repoRoot, kitConfig, opts = {}) {
-  if (!kitConfig || (!kitConfig.url && !kitConfig.kitLocal)) {
+  if (!kitConfig || (!kitConfig.url && !kitConfig.local)) {
     return { hits: [], filesChecked: 0, acceptedRefs: [] };
   }
 
   const absRepo = resolve(repoRoot);
   const exclude = [...DEFAULT_EXCLUDE, ...(opts.exclude || [])];
-  const acceptedRefs = [kitConfig.url, kitConfig.kitLocal].filter(Boolean);
+  const acceptedRefs = [kitConfig.url, kitConfig.local].filter(Boolean);
   const reserved = Array.isArray(kitConfig.reserved) && kitConfig.reserved.length
     ? kitConfig.reserved
     : DEFAULT_KIT_RESERVED;
@@ -145,7 +145,7 @@ export function scanKit(repoRoot, kitConfig, opts = {}) {
   const reservedSelectors = reserved.filter((r) => r !== '@font-face' && !r.startsWith('--'));
   const checkFontFace = reserved.includes('@font-face');
 
-  const kitLocalRel = kitConfig.kitLocal ? kitConfig.kitLocal.replace(/^\.?\//, '') : null;
+  const kitLocalRel = kitConfig.local ? kitConfig.local.replace(/^\.?\//, '') : null;
 
   const hits = [];
   let filesChecked = 0;
