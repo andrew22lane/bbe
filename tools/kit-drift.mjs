@@ -29,12 +29,26 @@
  * TWO CHECKS.
  *
  * (a) LINKS THE KIT FIRST. Any HTML file, any HTML-emitting template (a .mjs/.js
- *     file whose text contains `<head` or a `<link rel="stylesheet"` tag), is
- *     read for its stylesheet references in document order: `<link
- *     rel="stylesheet" href="...">` and `@import url("...")`. The kit
- *     (`url` or `local`) must be the FIRST one. A page with zero stylesheet
- *     references and no embedded kit URL string is also a miss — it built
- *     without the kit at all.
+ *     file whose text contains BOTH `<head` and `</head>` — it assembles a whole
+ *     page, not just a CSS-loading helper that happens to contain one `<link>`
+ *     for something else, e.g. pages.mjs's leafletHead()), is read for its
+ *     stylesheet references in document order: `<link rel="stylesheet"
+ *     href="...">` and `@import url("...")`. The kit (`url` or `local`) must be
+ *     the FIRST one. A page with zero stylesheet references and no embedded kit
+ *     URL string is also a miss — it built without the kit at all.
+ *
+ *     The href match tolerates two more shapes past a plain HTML attribute:
+ *     escaped quotes from a plain JS string built with concatenation
+ *     (`"<link rel=\"stylesheet\" href=\"...\">"`, next-step.mjs's actual
+ *     shape), and a bare `${identifier}` template expression whose value is
+ *     resolved by finding that identifier's own same-file string assignment
+ *     (single- or double-quoted) and comparing its BASENAME against the kit's
+ *     — leads-worker/src/render.js links `href="${KIT_PATH}"` where `export
+ *     const KIT_PATH = '/_kit/bex-kit-v1.css'` self-hosts the kit (its CSP is
+ *     `default-src 'self'`, so the CDN URL never appears in the file). A
+ *     variable built from OTHER variables (lib.mjs's
+ *     `` `${BASE}${KIT_LOCAL_HREF}?v=${BUILD}` ``) is not resolved — it falls
+ *     through to the embedsKitString check same as before.
  *
  * (b) NO RESERVED TOKEN OUTSIDE THE KIT. Any CSS-shaped rule block — in a
  *     `.css` file, a `<style>` block, or a JS template string, all read the same
@@ -76,19 +90,27 @@ function escapeRx(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// A quote that may be backslash-escaped: a plain JS string built with
+// concatenation (`"<link rel=\"stylesheet\"..."`) carries `\"` where an
+// HTML file or a backtick template literal carries a bare `"` or `'`. One
+// optional literal backslash in front of the quote covers both.
+const Q = `\\\\?["']`;
+
 // Every `<link rel="stylesheet" href="...">` and `@import url("...")`, text-wide,
-// in document order. Works the same whether the text is an .html file or a JS
-// template string holding markup — brand-drift's own approach to colour
-// literals, applied here to stylesheet references.
+// in document order. Works the same whether the text is an .html file, a
+// backtick template literal, or a plain JS string with escaped quotes —
+// brand-drift's own approach to colour literals, applied here to stylesheet
+// references.
 function findStylesheetRefs(text) {
   const refs = [];
-  const LINK_RX = /<link\s+[^>]*rel=["']stylesheet["'][^>]*>/gi;
+  const LINK_RX = new RegExp(`<link\\s+[^>]*rel=${Q}stylesheet${Q}[^>]*>`, 'gi');
+  const HREF_RX = new RegExp(`href=${Q}([^"'\\\\]+)${Q}`, 'i');
   let m;
   while ((m = LINK_RX.exec(text)) !== null) {
-    const hrefM = m[0].match(/href=["']([^"']+)["']/i);
+    const hrefM = m[0].match(HREF_RX);
     refs.push({ index: m.index, href: hrefM ? hrefM[1] : null });
   }
-  const IMPORT_RX = /@import\s+(?:url\()?["']([^"')]+)["']\)?/gi;
+  const IMPORT_RX = new RegExp(`@import\\s+(?:url\\()?${Q}([^"')\\\\]+)${Q}\\)?`, 'gi');
   while ((m = IMPORT_RX.exec(text)) !== null) {
     refs.push({ index: m.index, href: m[1] });
   }
@@ -96,8 +118,44 @@ function findStylesheetRefs(text) {
   return refs;
 }
 
-function isKitHref(href, acceptedRefs) {
-  return !!href && acceptedRefs.some((a) => href.includes(a));
+// The last path segment of a URL or local path, query string stripped —
+// "https://cdn.../bexco/kit/bex-kit-v1.css" and "/_kit/bex-kit-v1.css" and
+// "kit/bex-kit-v1.css" all resolve to "bex-kit-v1.css".
+function basename(s) {
+  if (!s) return '';
+  return s.split('?')[0].split('/').pop();
+}
+
+// A page that self-hosts the kit (leads-worker: CSP is `default-src 'self'`,
+// so the CDN URL never appears — see leads-worker/bbe.config.json) builds its
+// href from a same-file constant: `export const KIT_PATH = '/_kit/bex-kit-v1.css';`
+// then `href="${KIT_PATH}"`. The literal href text is the template expression,
+// not the URL. Resolve a BARE `${identifier}` href by finding that identifier's
+// own string assignment in the same file — single- or double-quoted, `const`,
+// `let`, `var`, or a bare `name = '...'` — and returning its value. Recursive
+// interpolation (a variable built from other variables, e.g. lib.mjs's
+// `` `${BASE}${KIT_LOCAL_HREF}?v=${BUILD}` ``) is deliberately NOT resolved:
+// the value is no longer one string this scanner can trust as a link target,
+// so it falls through to the embedsKitString check same as before.
+function resolveTemplateVar(text, varName) {
+  const rx = new RegExp(`\\b${escapeRx(varName)}\\s*=\\s*(["'])((?:(?!\\1)[^\\\\]|\\\\.)*)\\1`);
+  const m = rx.exec(text);
+  return m ? m[2] : null;
+}
+
+// Does this href point at the kit? Three ways, in order: the accepted ref
+// string (kit.url or kit.local) appears literally in the href; or the href is
+// a bare `${var}` template expression whose same-file string assignment's
+// basename matches the kit's own basename.
+function matchesKit(href, text, acceptedRefs, acceptedBasenames) {
+  if (!href) return false;
+  if (acceptedRefs.some((a) => href.includes(a))) return true;
+  const varM = href.match(/^\$\{(\w+)\}$/);
+  if (varM) {
+    const resolved = resolveTemplateVar(text, varM[1]);
+    if (resolved && acceptedBasenames.includes(basename(resolved))) return true;
+  }
+  return false;
 }
 
 // A .css file IS css, top to bottom. A .html/.mjs/.js/.cjs file is not — most of
@@ -138,6 +196,7 @@ export function scanKit(repoRoot, kitConfig, opts = {}) {
   const absRepo = resolve(repoRoot);
   const exclude = [...DEFAULT_EXCLUDE, ...(opts.exclude || [])];
   const acceptedRefs = [kitConfig.url, kitConfig.local].filter(Boolean);
+  const acceptedBasenames = acceptedRefs.map(basename).filter(Boolean);
   const reserved = Array.isArray(kitConfig.reserved) && kitConfig.reserved.length
     ? kitConfig.reserved
     : DEFAULT_KIT_RESERVED;
@@ -163,9 +222,15 @@ export function scanKit(repoRoot, kitConfig, opts = {}) {
 
     // ---------------------------------------------------------- (a) links first
     if (ext === '.html' || TEMPLATE_EXT.includes(ext)) {
+      // A .html file is always a page. A .mjs/.js/.cjs file is a page only when
+      // it actually assembles one: it must carry BOTH `<head` and `</head>`, not
+      // merely a stylesheet link anywhere in it. The old rule flagged any file
+      // with a `<link rel="stylesheet">` substring ANYWHERE — pages.mjs's
+      // leafletHead() helper returns one such link (Leaflet's own vendor CSS, a
+      // fragment with no head of its own) and was read as "the page" that missed
+      // the kit, when the real page head is assembled elsewhere (lib.mjs).
       const looksLikePage = ext === '.html'
-        || /<head[\s>]/i.test(text)
-        || /<link\s+[^>]*rel=["']stylesheet["']/i.test(text);
+        || (/<head[\s>]/i.test(text) && /<\/head>/i.test(text));
       if (looksLikePage) {
         const refs = findStylesheetRefs(text);
         const embedsKitString = acceptedRefs.some((a) => text.includes(a));
@@ -173,8 +238,8 @@ export function scanKit(repoRoot, kitConfig, opts = {}) {
           if (!embedsKitString) {
             hits.push({ file: rel, line: 1, reason: 'does not link the kit before any other stylesheet (no stylesheet reference found)' });
           }
-        } else if (!isKitHref(refs[0].href, acceptedRefs)) {
-          const kitRefIdx = refs.findIndex((r) => isKitHref(r.href, acceptedRefs));
+        } else if (!matchesKit(refs[0].href, text, acceptedRefs, acceptedBasenames)) {
+          const kitRefIdx = refs.findIndex((r) => matchesKit(r.href, text, acceptedRefs, acceptedBasenames));
           if (kitRefIdx === -1) {
             if (!embedsKitString) {
               hits.push({ file: rel, line: lineAt(text, refs[0].index), reason: `does not link the kit before any other stylesheet (found ${refs[0].href || '(unresolved href)'} first)` });

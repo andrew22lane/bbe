@@ -3,6 +3,43 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
+## v1.3.1 — kit link detection through escaped hrefs and template variables
+
+Reported by two bex-site workers wiring wave-2 surfaces onto the ONE kit on 2026-09-13: the
+v1.3.0 link-first check read `<link rel="stylesheet" href="...">` from HTML and from CSS/JS
+strings, but missed three real shapes, so `next-step.mjs`, `leads-worker/src/render.js` and
+`pages.mjs` all read as a KIT hit ("missing kit link") while they actually link the kit first.
+
+- **Escaped quotes.** A plain JS string built with concatenation carries `\"` where an HTML
+  file or a backtick template literal carries a bare `"`. `next-step.mjs`'s real head is one
+  such string; the old regex required `rel=` to be followed immediately by a bare quote
+  character, so it silently matched nothing in the whole file. The link and href regexes now
+  tolerate one optional literal backslash in front of either quote character.
+- **A `${var}` href resolved via its own same-file string assignment.** A page that self-hosts
+  the kit (leads-worker: CSP is `default-src 'self'`, so the CDN URL never appears in the file)
+  writes `href="${KIT_PATH}"` where `export const KIT_PATH = '/_kit/bex-kit-v1.css'` sits
+  elsewhere in the same file, single-quoted. A bare `${identifier}` href is now resolved by
+  finding that identifier's own string assignment (single- or double-quoted) in the same file
+  and comparing its BASENAME against `kit.url`'s and `kit.local`'s. A variable built from OTHER
+  variables (not one plain string) is not resolved — it still falls through to the existing
+  embedded-URL-string check, unchanged.
+- **A `.mjs`/`.js` file is only a page when it assembles one.** The old rule treated any
+  `.mjs`/`.js` file containing a `<link rel="stylesheet">` substring ANYWHERE as a page needing
+  its own kit-first link. `pages.mjs`'s `leafletHead()` helper returns exactly one such link —
+  Leaflet's own vendor CSS, a fragment with no head of its own, the real page head being
+  assembled elsewhere — and was read as "the page" that missed the kit. A `.mjs`/`.js`/`.cjs`
+  file now counts as a page only when it carries BOTH `<head` and `</head>`; a `.html` file is
+  still always a page.
+- **What still cannot be seen, on purpose:** a template variable assembled from OTHER
+  variables (e.g. `` `${BASE}${KIT_LOCAL_HREF}?v=${BUILD}` ``) is not resolved into a single
+  string, so it still relies on the kit URL or local path appearing literally elsewhere in the
+  file. That is an existing, separate blind spot (unrelated files already pass through it by
+  accident) and is out of scope for this fix.
+- Tests: five new fixture cases in `test/kit-check.mjs` (escaped double quotes; a single-quoted
+  variable feeding a template-literal href; a `${KIT}` variable resolved by same-file basename
+  match; the kit linked but not FIRST, still a hit; no kit reference at all, still a hit).
+  `npm test` runs `test/kit-check.mjs` (now 15 cases) and `test/smoke.mjs`, both green.
+
 ## v1.3.0 — the kit-aware gate
 
 Enforces `vault/core/ONE-SYSTEM-LAW.md`: every brand runs on exactly ONE kit file, linked

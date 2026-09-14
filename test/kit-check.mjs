@@ -3,7 +3,7 @@
 //
 //   node test/kit-check.mjs
 //
-// Five cases, matching the ones asked for on 2026-09-10:
+// Cases 1-6, matching the ones asked for on 2026-09-10:
 //   1. kit linked + clean surface css -> zero hits
 //   2. a local `.btn` -> fails, with the right line
 //   3. the kit link missing entirely -> fails
@@ -12,6 +12,15 @@
 //   6. no kit config at all -> skip, zero hits, zero files checked (the gate's own
 //      one-line warning is asserted end to end in test/smoke.mjs, since printing it
 //      is bin/bbe-gate's job, not scanKit's)
+//
+// Cases 7-11, added 2026-09-13 (v1.3.1) after two bex-site workers found the
+// link-first check blind to escaped quotes and template variables — fixtures
+// copy the real shapes from next-step.mjs and leads-worker/src/render.js:
+//   7. escaped double quotes in a plain JS string -> passes (kit linked first)
+//   8. single-quoted variable feeding a `${...}` href in a template literal -> passes
+//   9. `${KIT}` template variable resolved via a same-file string constant -> passes
+//  10. the kit linked, but NOT first -> still a hit
+//  11. no kit reference at all -> still a hit
 //
 // Same shape as brand-drift.mjs's own selftest: build a throwaway fixture repo,
 // call the scanner directly, assert on its return value. No CLI, no gate — that
@@ -136,6 +145,81 @@ console.log('\n  kit-drift.mjs — kit-check\n');
   probe('case 6a: no kit config -> zero files checked', noConfig.filesChecked === 0);
   const emptyKit = scanKit(fx.dir, {}, {});
   probe('case 6b: an empty kit object (no url, no local) behaves the same as null', emptyKit.hits.length === 0 && emptyKit.filesChecked === 0);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 7
+// next-step.mjs's real shape: one plain double-quoted JS string, built with
+// concatenation, carrying `\"` throughout instead of a bare `"`. The old
+// LINK_RX required `rel=` to be followed immediately by a bare quote char, so
+// it silently matched nothing here.
+{
+  const fx = fixture();
+  fx.write('next-step.mjs', `const TEMPLATE = "<!doctype html><html lang=\\"en\\"><head>\\n` +
+    `<link rel=\\"stylesheet\\" href=\\"${KIT_URL}\\"/><link rel=\\"stylesheet\\" href=\\"/assets/site.css\\"/>\\n` +
+    `</head><body></body></html>";\n`);
+  const r = scanKit(fx.dir, { url: KIT_URL }, {});
+  probe('case 7: escaped double quotes, kit linked first -> zero hits', r.hits.length === 0);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 8
+// A backtick template literal whose href is itself a `${var}` reference, and
+// that variable is defined with SINGLE quotes elsewhere in the file — the
+// same shape as leads-worker/src/render.js's `export const KIT_PATH =
+// '/_kit/bex-kit-v1.css'` feeding `href="${KIT_PATH}"`.
+{
+  const fx = fixture();
+  fx.write('render.js', `export const KIT_PATH = '/_kit/fixture-kit-v1.css';\n` +
+    `function head(){\n` +
+    `return \`<html><head><link rel="stylesheet" href="\${KIT_PATH}"></head></html>\`;\n` +
+    `}\n`);
+  const r = scanKit(fx.dir, { url: KIT_URL }, {});
+  probe('case 8: single-quoted var feeding a template-literal href -> zero hits', r.hits.length === 0);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 9
+// Same as case 8, named separately per the ask: a bare `${KIT}` template
+// variable resolved via its own same-file string assignment, basename-matched
+// against kit.local (no CDN url in this file at all — a self-hosted surface).
+{
+  const fx = fixture();
+  fx.write('worker.js', `const KIT = '/_kit/fixture-kit-v1.css';\n` +
+    `function page(){\n` +
+    `return \`<html><head><link rel='stylesheet' href='\${KIT}'></head></html>\`;\n` +
+    `}\n`);
+  const r = scanKit(fx.dir, { local: 'kit/fixture-kit-v1.css' }, {});
+  probe('case 9: ${KIT} resolved by same-file basename match -> zero hits', r.hits.length === 0);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 10
+// The kit is linked, and resolvable, but NOT first — a real miss, and the
+// escaped-quote / template-variable handling must not paper over it.
+{
+  const fx = fixture();
+  fx.write('render.js', `export const KIT_PATH = '/_kit/fixture-kit-v1.css';\n` +
+    `function head(){\n` +
+    `return \`<html><head><link rel="stylesheet" href="/surface.css"><link rel="stylesheet" href="\${KIT_PATH}"></head></html>\`;\n` +
+    `}\n`);
+  const r = scanKit(fx.dir, { local: 'kit/fixture-kit-v1.css' }, {});
+  const hit = r.hits.find((h) => /not linked FIRST/.test(h.reason));
+  probe('case 10: kit resolvable but not first -> still a hit', !!hit);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 11
+// No kit reference anywhere in the file — no literal, no resolvable
+// template variable. Still a miss.
+{
+  const fx = fixture();
+  fx.write('page.mjs', `function head(){\n` +
+    `return \`<html><head><link rel="stylesheet" href="/surface.css"></head></html>\`;\n` +
+    `}\n`);
+  const r = scanKit(fx.dir, { url: KIT_URL }, {});
+  const hit = r.hits.find((h) => h.file === 'page.mjs');
+  probe('case 11: no kit reference at all -> still a hit', !!hit);
   rmSync(fx.dir, { recursive: true, force: true });
 }
 
