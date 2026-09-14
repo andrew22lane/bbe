@@ -198,6 +198,71 @@ function gateConfigChecks(dir) {
   fs.writeFileSync(cfgPath, original);
 }
 
+// ---------------------------------------------------------------- the kit check, end to end
+// kit-check.mjs unit-tests tools/kit-drift.mjs directly (five cases). This proves bin/bbe-gate
+// WIRES it in correctly: the "local" field name (every 2026-09-13 kit mint wrote "local", not
+// "kitLocal" — a name that never matched would have silently never exempted a single kit file
+// and never recognised a single local link), the automatic hex-ratchet exemption for kit.local,
+// and the one-line skip warning when a brand has no kit yet. Runs against its OWN tiny fixture
+// repo, never the scaffolded site/worker lanes, so an unrelated template file elsewhere in the
+// scaffold can never make this pass or fail for the wrong reason.
+function kitEndToEndCheck() {
+  log('');
+  log('--- kit check (bin/bbe-gate, end to end) ---');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbe-smoke-kit-'));
+  const pack = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'fixture.brandpack.json'), 'utf8'));
+  const brandHex = pack.outputs.web.palette.mark.value; // "#2F6F62"
+
+  fs.mkdirSync(path.join(dir, 'brand'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'brand', 'fixture.brandpack.json'), JSON.stringify(pack, null, 2));
+
+  const baseCfg = { pack: 'fixture', exclude: [], baseline: 0 };
+  const cfgPath = path.join(dir, 'bbe.config.json');
+  fs.writeFileSync(cfgPath, JSON.stringify(baseCfg, null, 2) + '\n');
+
+  // skip: no "kit" key at all. Still passes, one-line warning, never a FAIL.
+  const noKit = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  check('no "kit" in bbe.config.json: gate still passes', noKit.status === 0);
+  check('no "kit" in bbe.config.json: prints a one-line skip warning',
+    /kit check\s+skipped — no "kit" in bbe\.config\.json/.test(noKit.out));
+
+  // Wire a real kit: kit.local carries the brand's own hex (as a real kit must), and one
+  // page links it FIRST with nothing else declaring a reserved token.
+  fs.mkdirSync(path.join(dir, 'kit'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'kit', 'fixture-kit-v1.css'), `:root{--primary:${brandHex};}\n.btn{padding:.5rem}\n`);
+  const pagePath = path.join(dir, 'index.html');
+  fs.writeFileSync(pagePath, `<!doctype html><html><head>\n<link rel="stylesheet" href="/kit/fixture-kit-v1.css">\n</head><body></body></html>\n`);
+  const withKit = { ...baseCfg, kit: { url: 'https://cdn.example.test/fixture-kit-v1.css', local: 'kit/fixture-kit-v1.css' } };
+  fs.writeFileSync(cfgPath, JSON.stringify(withKit, null, 2) + '\n');
+
+  const pass = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  check('pass: kit.local is exempt from the hex ratchet with no "exclude" entry needed',
+    pass.status === 0 && /BRAND hits: 0/.test(pass.out));
+  check('pass: kit linked first, only the kit declares tokens -> zero KIT hits',
+    /KIT hits: 0/.test(pass.out));
+  check('pass: reports the exempted kit file by its "local" path',
+    pass.out.includes('kit/fixture-kit-v1.css'));
+
+  // fail: the page never links the kit. No ratchet on a KIT hit — one hit fails outright,
+  // even though the hex baseline is untouched at 0.
+  fs.writeFileSync(pagePath, `<!doctype html><html><head>\n<link rel="stylesheet" href="/other.css">\n</head><body></body></html>\n`);
+  const missingLink = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('fail: a page that never links the kit fails the build',
+    missingLink.status === 1 && /KIT hits: [1-9]/.test(missingLink.out));
+  check('fail: BRAND is still 0 — this is a KIT failure, not a ratchet failure',
+    /BRAND hits: 0/.test(missingLink.out));
+
+  // fail: the link is restored, but a surface file declares its own .btn outside the kit.
+  fs.writeFileSync(pagePath, `<!doctype html><html><head>\n<link rel="stylesheet" href="/kit/fixture-kit-v1.css">\n</head><body></body></html>\n`);
+  fs.writeFileSync(path.join(dir, 'surface.css'), `.btn{background:#fff}\n`);
+  const localBtn = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('fail: a local .btn outside the kit fails the build',
+    localBtn.status === 1 && /KIT hits: [1-9]/.test(localBtn.out) && /\.btn declared outside the kit/.test(localBtn.out));
+
+  if (!KEEP) fs.rmSync(dir, { recursive: true, force: true });
+  else log(`\nkept: ${dir}`);
+}
+
 log(`bbe new-surface smoke test — @andrew22lane/bbe ${JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version}`);
 
 log('');
@@ -231,6 +296,8 @@ const badKind = run(process.execPath, [
 check('refuses an unknown --kind', badKind.status === 1 && /must be site or worker/.test(badKind.out));
 
 const dirs = [lane('site'), lane('worker')];
+
+kitEndToEndCheck();
 
 if (!KEEP) for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
 else log(`\nkept: ${dirs.join(' ')}`);

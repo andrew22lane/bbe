@@ -19,4 +19,4 @@ permissions:
 
 jobs:
   brand-gate:
-    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.2.0
+    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.3.0

@@ -47,7 +47,7 @@ Andrew's call, not a blocker.
 ## Install
 
 ```
-npm install @andrew22lane/bbe@1.2.0
+npm install @andrew22lane/bbe@1.3.0
 ```
 
 That is the GitHub Packages form and it needs a token. What every consumer in the
@@ -55,7 +55,7 @@ estate actually ships is the **git tag** form, which needs no registry, no `.npm
 and no secret anywhere:
 
 ```json
-"dependencies": { "@andrew22lane/bbe": "github:andrew22lane/bbe#v1.2.0" }
+"dependencies": { "@andrew22lane/bbe": "github:andrew22lane/bbe#v1.3.0" }
 ```
 
 Either way, pin an EXACT version. No carets, no ranges, no branch names. A range
@@ -191,7 +191,7 @@ The gate's CI steps live in `.github/workflows/bbe-gate.yml` in this repo, behin
 ```yaml
 jobs:
   brand-gate:
-    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.2.0
+    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.3.0
 ```
 
 It checks out, sets up Node, installs (`npm ci` with a lockfile, `npm install`
@@ -231,6 +231,38 @@ above. A pack carrying only SOME of the seven fails loudly rather than being gue
 `node test/smoke.mjs` scaffolds both kinds from an invented fixture pack, installs this
 checkout into each, builds, and asserts the gate reads zero. It runs in CI on every pull
 request. The fixture is the only pack this repo ships and it belongs to no client.
+
+## Kit check
+
+Brand-drift proves no raw hex outside the pack. It says nothing about whether two
+surfaces on the same brand LOOK alike, and eight bex surfaces each hand-typed their
+own button and passed it — two primary teals live at once. `bbe.config.json` gains
+an optional `kit` object:
+
+```json
+"kit": {
+  "url": "https://cdn.brandbuilderengine.com/<brand>/kit/<brand>-kit-v<N>.css",
+  "local": "kit/bex-kit-v1.css"
+}
+```
+
+`url` is the CDN kit URL every consumer surface links. `local` is only for the one
+repo per brand that BUILDS the kit file (e.g. `bex-site/kit/bex-kit-v1.css`), whose
+own pages link it by a local path instead of the CDN URL — `local` is accepted as an
+equivalent link target. **The file at `kit.local` is exempt from the hex ratchet
+automatically**, so a consumer does not also add `"kit"` (or the kit's own path) to
+`exclude` by hand — `bbe-gate` reads `kit.local` and excludes it itself.
+
+When `kit` is set, `bbe-gate` fails on any `.html`/`.mjs`/`.js`/`.css` file that does
+not link the kit FIRST, and on any `:root` token, `@font-face`, or bare
+`.btn`/`.btn-primary`/`.btn-ghost`/`.nav`/`body`/`h1`-`h4` rule declared outside the
+kit file itself (override the list with `kit.reserved`). There is no ratchet: unlike
+the hex baseline, one KIT hit fails the build, every time — `KIT hits: N` prints on
+its own line. **No `kit` object in the config at all** is not an error: the kit check
+is skipped with a one-line warning (`kit check    skipped — no "kit" in
+bbe.config.json`), so a brand with no kit yet keeps passing. `bbe new-surface` wires
+the link and a `kit`-aware `bbe.config.json` in automatically when the pack (or
+`--kit`) names one. Full law: `vault/core/ONE-SYSTEM-LAW.md` in dh-hub.
 
 ## How to add a consumer
 
