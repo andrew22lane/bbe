@@ -112,7 +112,8 @@ export function makeRevealScript({burgerAria=false,whenNear=false}={}){
   const near=whenNear?`// Defer below-fold Leaflet maps until scrolled near (saves tiles + JS during load)\nwindow.whenNear=function(id,cb){var el=document.getElementById(id);if(!el||!('IntersectionObserver'in window))return cb();var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){io.disconnect();cb();}});},{rootMargin:'400px'});io.observe(el);};\n`:'';
   return `<script>
 const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});},{threshold:.12});
-document.querySelectorAll('.r,.stagger').forEach(el=>{const x=el.getBoundingClientRect();if(x.top<innerHeight*.95)el.classList.add('in');else io.observe(el);});
+const rEls=[...document.querySelectorAll('.r,.stagger')],rH=innerHeight*.95,rTops=rEls.map(el=>el.getBoundingClientRect().top);
+rEls.forEach((el,i)=>{if(rTops[i]<rH)el.classList.add('in');else io.observe(el);});
 // Pause photo marquees while off-screen so they stop compositing (mobile scroll + battery)
 var mqs=[].slice.call(document.querySelectorAll('.marquee'));
 if(mqs.length&&'IntersectionObserver'in window){var mio=new IntersectionObserver(function(es){es.forEach(function(e){var t=e.target.querySelectorAll('.mq-track');for(var i=0;i<t.length;i++)t[i].classList.toggle('mq-paused',!e.isIntersecting);
