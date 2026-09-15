@@ -51,6 +51,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { scanRepo, DEFAULT_EXCLUDE } from '../tools/brand-drift.mjs';
 import { scanKit } from '../tools/kit-drift.mjs';
+import { scanHead } from '../tools/head-check.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DRIFT = path.join(HERE, '..', 'tools', 'brand-drift.mjs');
@@ -145,6 +146,16 @@ if (config.kit != null) {
   if (!config.kit.url && !config.kit.local) {
     die(`${configSource} "kit" needs a "url" or a "local" path — see ONE-SYSTEM-LAW.md`);
   }
+  // Andrew, 2026-09-15: "same favicon should be used for all pages created, and
+  // a default branded share image must be auto set up for all pages made."
+  // Both optional, both opt-in, both independent — a brand can wire in one
+  // before the other. Absent, the head check is skipped, not failed.
+  if (config.kit.favicon != null && typeof config.kit.favicon !== 'string') {
+    die(`${configSource} "kit.favicon" must be a string (an absolute URL)`);
+  }
+  if (config.kit.ogImage != null && typeof config.kit.ogImage !== 'string') {
+    die(`${configSource} "kit.ogImage" must be a string (an absolute URL)`);
+  }
 }
 
 const packPath = path.join(repoRoot, 'brand', `${config.pack}.brandpack.json`);
@@ -184,9 +195,18 @@ const fell = scan.brand.length < config.baseline;
 const kitResult = config.kit ? scanKit(repoRoot, config.kit, { exclude: config.exclude || [] }) : null;
 const kitFailed = !!(kitResult && kitResult.hits.length > 0);
 
+// ---------------------------------------------------------------- the head scan
+// Same no-ratchet posture as the kit scan: this proves every page carries the
+// ONE favicon and a default share image, and a partial rollout is exactly the
+// bug it exists to catch. Independently opt-in per key (kit.favicon,
+// kit.ogImage), so a brand can wire in one before the other, and a repo with
+// neither key set behaves exactly as it did before this check existed.
+const headResult = config.kit ? scanHead(repoRoot, config.kit, { exclude: config.exclude || [] }) : null;
+const headFailed = !!(headResult && headResult.hits.length > 0);
+
 if (JSON_OUT) {
   console.log(JSON.stringify({
-    ok: !rose && !kitFailed,
+    ok: !rose && !kitFailed && !headFailed,
     tool: `@andrew22lane/bbe ${PKG.version}`,
     repo: scan.repo,
     config: configSource,
@@ -206,9 +226,17 @@ if (JSON_OUT) {
       filesChecked: kitResult.filesChecked,
       hits: kitResult.hits.length,
       violations: kitResult.hits
+    } : { checked: false },
+    head: headResult ? {
+      checked: true,
+      faviconChecked: headResult.faviconChecked,
+      ogImageChecked: headResult.ogImageChecked,
+      filesChecked: headResult.filesChecked,
+      hits: headResult.hits.length,
+      violations: headResult.hits
     } : { checked: false }
   }, null, 2));
-  process.exit((rose || kitFailed) ? 1 : 0);
+  process.exit((rose || kitFailed || headFailed) ? 1 : 0);
 }
 
 say(`brand gate — pack ${config.pack}  (@andrew22lane/bbe ${PKG.version} bbe-gate)`);
@@ -236,6 +264,22 @@ if (kitResult) {
   // dark silently. One line, machine-checkable, never a FAIL.
   say('');
   say(`  kit check    skipped — no "kit" in ${CONFIG_NAME} (see vault/core/ONE-SYSTEM-LAW.md)`);
+}
+
+// ---------------------------------------------------------------- the head report
+say('');
+if (config.kit && (config.kit.favicon || config.kit.ogImage)) {
+  const parts = [];
+  if (config.kit.favicon) parts.push(`favicon ${config.kit.favicon}`);
+  if (config.kit.ogImage) parts.push('og:image');
+  say(`  head check   ${parts.join(' · ')}  (${headResult.filesChecked} files checked)`);
+  for (const h of headResult.hits) say(`  HEAD: ${h.file}:${h.line} ${h.reason}`);
+  say(`  HEAD hits: ${headResult.hits.length}`);
+  if (!config.kit.favicon) say(`  head check   favicon skipped — no "kit.favicon" in ${CONFIG_NAME}`);
+  if (!config.kit.ogImage) say(`  head check   og:image skipped — no "kit.ogImage" in ${CONFIG_NAME}`);
+} else {
+  // Same posture as the "no kit at all" skip above: never a FAIL, never silent.
+  say(`  head check   skipped — no "kit.favicon" or "kit.ogImage" in ${CONFIG_NAME} (see vault/core/ONE-SYSTEM-LAW.md)`);
 }
 
 // ---------------------------------------------------------------- --write-baseline
@@ -270,13 +314,18 @@ if (kitFailed) {
   console.log(`FAIL: ${kitResult.hits.length} KIT hit(s). Every surface links the kit first and defines none of its own reserved tokens. See vault/core/ONE-SYSTEM-LAW.md.`);
 }
 
+if (headFailed) {
+  console.log('');
+  console.log(`FAIL: ${headResult.hits.length} HEAD hit(s). Every page carries the ONE favicon and a share image. See vault/core/ONE-SYSTEM-LAW.md.`);
+}
+
 if (rose) {
   console.log('');
   console.log(`FAIL: BRAND count rose from ${config.baseline} to ${scan.brand.length}.`);
   console.log(`The baseline ratchets DOWN only — never raise "baseline" in ${CONFIG_NAME} by hand.`);
 }
 
-if (rose || kitFailed) process.exit(1);
+if (rose || kitFailed || headFailed) process.exit(1);
 
 if (fell) {
   say('');

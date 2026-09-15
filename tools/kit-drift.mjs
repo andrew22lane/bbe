@@ -80,7 +80,7 @@ export const DEFAULT_KIT_RESERVED = [
 const CHECK_EXT = ['.html', '.mjs', '.js', '.cjs', '.css'];
 const TEMPLATE_EXT = ['.mjs', '.js', '.cjs'];
 
-function lineAt(text, index) {
+export function lineAt(text, index) {
   let line = 1;
   for (let i = 0; i < index && i < text.length; i++) if (text[i] === '\n') line++;
   return line;
@@ -137,10 +137,21 @@ function basename(s) {
 // `` `${BASE}${KIT_LOCAL_HREF}?v=${BUILD}` ``) is deliberately NOT resolved:
 // the value is no longer one string this scanner can trust as a link target,
 // so it falls through to the embedsKitString check same as before.
-function resolveTemplateVar(text, varName) {
+export function resolveTemplateVar(text, varName) {
   const rx = new RegExp(`\\b${escapeRx(varName)}\\s*=\\s*(["'])((?:(?!\\1)[^\\\\]|\\\\.)*)\\1`);
   const m = rx.exec(text);
   return m ? m[2] : null;
+}
+
+// Is this file one of the pages the ONE-SYSTEM-LAW checks apply to? A .html
+// file always is. A .mjs/.js/.cjs file is one only when it actually assembles
+// a whole page (carries BOTH `<head` and `</head>`), never merely because it
+// contains a stray `<link>` fragment — see pages.mjs's leafletHead() in the
+// v1.3.1 changelog entry above. Shared by scanKit's link-first check and by
+// head-check.mjs's favicon / og:image check, so the two scanners cannot
+// disagree about what counts as a page.
+export function isPageFile(ext, text) {
+  return ext === '.html' || (TEMPLATE_EXT.includes(ext) && /<head[\s>]/i.test(text) && /<\/head>/i.test(text));
 }
 
 // Does this href point at the kit? Three ways, in order: the accepted ref
@@ -229,9 +240,7 @@ export function scanKit(repoRoot, kitConfig, opts = {}) {
       // leafletHead() helper returns one such link (Leaflet's own vendor CSS, a
       // fragment with no head of its own) and was read as "the page" that missed
       // the kit, when the real page head is assembled elsewhere (lib.mjs).
-      const looksLikePage = ext === '.html'
-        || (/<head[\s>]/i.test(text) && /<\/head>/i.test(text));
-      if (looksLikePage) {
+      if (isPageFile(ext, text)) {
         const refs = findStylesheetRefs(text);
         const embedsKitString = acceptedRefs.some((a) => text.includes(a));
         if (refs.length === 0) {

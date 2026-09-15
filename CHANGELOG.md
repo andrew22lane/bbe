@@ -3,6 +3,58 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
+## v1.4.0 — the head check (one favicon, one default share image)
+
+Andrew, 2026-09-15: "same favicon should be used for all pages created, and a default
+branded share image must be auto set up for all pages made." The kit check
+(v1.3.0) proved every surface links ONE stylesheet and defines none of its own reserved
+tokens. It said nothing about the two tags every page ships in its `<head>` by hand: the
+favicon, and the `og:image`/`twitter:card` pair a link unfurls with when it is pasted
+anywhere. This closes that gap the same way — a gate check plus a scaffold that wires it
+in on day one, rather than a rule that has to be remembered per page.
+
+- **`bbe.config.json`'s `kit` object gains two more optional keys**: `"favicon"` and
+  `"ogImage"`, both absolute URLs. Each is independently opt-in, exactly like `kit`
+  itself — a repo with neither key set behaves exactly as it did on v1.3.1, and a brand
+  can wire in one before the other. There is no migration: nothing breaks for a consumer
+  that does not touch this.
+- **`bbe-gate` gains a head check**, `tools/head-check.mjs`, run right after the kit
+  check with the same no-ratchet posture: one hit fails the build, every time. When
+  `kit.favicon` is set, every page the kit check already treats as a page (any `.html`
+  file, or a `.mjs`/`.js`/`.cjs` file that assembles a whole page) must carry a
+  `<link rel="icon" ...>` whose href resolves to EXACTLY `kit.favicon` — missing it, or
+  pointing somewhere else, is one hit. When `kit.ogImage` is set, every page must carry a
+  `<meta property="og:image" content="...">` with ANY non-empty value — a page-specific
+  share image (a blog post's own card) is allowed to override the brand default, so the
+  VALUE is never compared to `kit.ogImage`, only its presence — plus a
+  `<meta name="twitter:card" content="...">` alongside it, because Twitter/X ignores
+  `og:image` without one. Prints as `head check   favicon <url> · og:image (N files
+  checked)`, and each hit as `HEAD: <file>:<line> <reason>`. Two keys absent (or no
+  `kit` object at all) prints a one-line skip warning, same style as the kit check's,
+  never a FAIL.
+- **Href/content resolution reuses kit-drift.mjs's own escaping logic**, exported for
+  this: `isPageFile` (what counts as a page, so the two scanners can never disagree),
+  `resolveTemplateVar` (a bare `${identifier}` href resolved via that identifier's own
+  same-file string assignment) and `lineAt`. A worker-rendered page whose favicon href is
+  a template variable — the exact shape `bbe new-surface` itself now scaffolds — is
+  detected the same way v1.3.1 already detects a template-variable kit link.
+- **`bbe new-surface` wires it in on day one.** The pack's `outputs.web.kit.favicon` /
+  `.ogImage` (or `--favicon <url>` / `--og-image <url>`, the escape hatch for a pack not
+  yet updated) get written into the scaffolded `bbe.config.json`'s `kit` object AND into
+  every generated page head: a site build's `extraHead` slot (so the shared,
+  byte-frozen `engine/lib.mjs` stays untouched) and a worker's inline `<head>` template.
+  Tags emitted: `<link rel="icon" type="image/svg+xml" href="{favicon}">`,
+  `<meta property="og:image" content="{ogImage}">` with `og:image:width`/`:height` set
+  to `1200`/`630`, `<meta name="twitter:card" content="summary_large_image">`, and
+  `<meta name="twitter:image" content="{ogImage}">`. Neither flag present, neither key
+  on the pack: the scaffold writes exactly what v1.3.1 wrote, nothing new to fail the
+  head check because there is nothing to check.
+- Tests: `test/head-check.mjs` (new, 14 cases a-g, the same throwaway-fixture-repo style
+  as `test/kit-check.mjs`) and a `headEndToEndCheck()` block in `test/smoke.mjs` proving
+  `bin/bbe-gate` wires `scanHead` in correctly — reads `kit.favicon`/`kit.ogImage`,
+  prints the report lines, fails the build on a real hit. `npm test` now runs
+  `test/kit-check.mjs`, `test/head-check.mjs` and `test/smoke.mjs`, all green.
+
 ## v1.3.1 — kit link detection through escaped hrefs and template variables
 
 Reported by two bex-site workers wiring wave-2 surfaces onto the ONE kit on 2026-09-13: the

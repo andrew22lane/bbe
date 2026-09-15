@@ -47,7 +47,7 @@ Andrew's call, not a blocker.
 ## Install
 
 ```
-npm install @andrew22lane/bbe@1.3.1
+npm install @andrew22lane/bbe@1.4.0
 ```
 
 That is the GitHub Packages form and it needs a token. What every consumer in the
@@ -55,7 +55,7 @@ estate actually ships is the **git tag** form, which needs no registry, no `.npm
 and no secret anywhere:
 
 ```json
-"dependencies": { "@andrew22lane/bbe": "github:andrew22lane/bbe#v1.3.1" }
+"dependencies": { "@andrew22lane/bbe": "github:andrew22lane/bbe#v1.4.0" }
 ```
 
 Either way, pin an EXACT version. No carets, no ranges, no branch names. A range
@@ -191,7 +191,7 @@ The gate's CI steps live in `.github/workflows/bbe-gate.yml` in this repo, behin
 ```yaml
 jobs:
   brand-gate:
-    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.3.1
+    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.4.0
 ```
 
 It checks out, sets up Node, installs (`npm ci` with a lockfile, `npm install`
@@ -263,6 +263,35 @@ is skipped with a one-line warning (`kit check    skipped — no "kit" in
 bbe.config.json`), so a brand with no kit yet keeps passing. `bbe new-surface` wires
 the link and a `kit`-aware `bbe.config.json` in automatically when the pack (or
 `--kit`) names one. Full law: `vault/core/ONE-SYSTEM-LAW.md` in dh-hub.
+
+## Head check
+
+Andrew, 2026-09-15: "same favicon should be used for all pages created, and a
+default branded share image must be auto set up for all pages made." The `kit`
+object gains two more optional keys, both absolute URLs:
+
+```json
+"kit": {
+  "url": "https://cdn.brandbuilderengine.com/<brand>/kit/<brand>-kit-v<N>.css",
+  "favicon": "https://cdn.brandbuilderengine.com/designhacker/brand/identity-2026/favicon/favicon.svg",
+  "ogImage": "https://cdn.brandbuilderengine.com/designhacker/brand/kit/dh-og-default.jpg"
+}
+```
+
+Each is independently **opt-in**, exactly like `kit` itself: a repo with neither key
+set behaves exactly as it did before this check existed, and a brand can wire in one
+before the other. When `kit.favicon` is set, every page (the same pages the kit-link
+check already looks at) must carry a `<link rel="icon" ...>` whose href resolves to
+EXACTLY `kit.favicon` — missing it, or pointing somewhere else, is one hit. When
+`kit.ogImage` is set, every page must carry a `<meta property="og:image"
+content="...">` with ANY non-empty value (a page's own share image, e.g. a blog
+post's card, is allowed to override the brand default — the VALUE is never compared
+to `kit.ogImage`, only its presence) and a `<meta name="twitter:card" content="...">`
+alongside it. There is no ratchet, the same posture as the kit-link check: one
+`HEAD` hit fails the build, every time. `bbe new-surface` wires the favicon and
+share-image tags into every generated page head, and `kit.favicon`/`kit.ogImage`
+into `bbe.config.json`, the moment the pack's `outputs.web.kit` (or `--favicon` /
+`--og-image`) names them. Full law: `vault/core/ONE-SYSTEM-LAW.md` in dh-hub.
 
 ## How to add a consumer
 
