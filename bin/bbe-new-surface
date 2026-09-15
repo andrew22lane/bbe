@@ -30,6 +30,12 @@
 //                        Default $BBE_PACKS_DIR, then ~/dh-work/dh-hub/vault/core/brand-packs.
 //   --engine <spec>      the dependency spec pinned in package.json.
 //                        Default github:andrew22lane/bbe#v<this package's version>.
+//   --favicon <url>      the brand's ONE favicon, absolute URL. Default: the pack's
+//                        outputs.web.kit.favicon, if it has one. Wired into
+//                        bbe.config.json's kit.favicon and every generated page head.
+//   --og-image <url>     the brand's default share image, absolute URL. Default: the
+//                        pack's outputs.web.kit.ogImage. Wired into kit.ogImage and
+//                        every generated page head, alongside twitter:card.
 //   --force              write into a non-empty directory this tool did not create.
 //
 // Exit 0 written or already current. Exit 1 refused (non-empty dir, bad input).
@@ -68,6 +74,8 @@ bbe new-surface — scaffold a surface that starts clean by construction.
   --pack-file <path>  exact pack file, instead of a packs dir
   --packs-dir <path>  packs dir (default $BBE_PACKS_DIR, then the vault path)
   --engine <spec>     dependency spec (default github:andrew22lane/bbe#v${PKG.version})
+  --favicon <url>     the brand's ONE favicon (default: the pack's outputs.web.kit.favicon)
+  --og-image <url>    the brand's default share image (default: outputs.web.kit.ogImage)
   --force             write into a non-empty directory this tool did not create
 `.trim());
   process.exit(code);
@@ -140,6 +148,16 @@ const KIT_FROM_PACK = pack?.outputs?.web?.kit;
 const KIT_URL = argOf('--kit') || (typeof KIT_FROM_PACK === 'string' ? KIT_FROM_PACK : KIT_FROM_PACK?.url) || null;
 const KIT_VERSION = (typeof KIT_FROM_PACK === 'object' && KIT_FROM_PACK?.version) || null;
 
+// 2026-09-15: "same favicon should be used for all pages created, and a
+// default branded share image must be auto set up for all pages made."
+// Both optional and independent, same as KIT_VERSION above — the pack's own
+// outputs.web.kit.favicon/.ogImage win, --favicon/--og-image are the escape
+// hatch for a pack that has not been updated yet. Absent either, the
+// scaffold writes bbe.config.json and page heads exactly as it did before
+// this rule existed: nothing wired in, nothing to fail bbe-gate's head check.
+const KIT_FAVICON = argOf('--favicon') || (typeof KIT_FROM_PACK === 'object' && KIT_FROM_PACK?.favicon) || null;
+const KIT_OG_IMAGE = argOf('--og-image') || (typeof KIT_FROM_PACK === 'object' && KIT_FROM_PACK?.ogImage) || null;
+
 // ---------------------------------------------------------------- templates
 
 function gitignore() {
@@ -166,6 +184,13 @@ function bbeConfig() {
   };
   if (KIT_URL) {
     cfg.kit = { url: KIT_URL, ...(KIT_VERSION ? { version: KIT_VERSION } : {}) };
+    // bbe-gate's head check (v1.4.0+): the ONE favicon and a default share
+    // image, wired in from day one when the brand's kit names one. Both live
+    // inside this same "kit" object — favicon/ogImage need a kit.url or
+    // kit.local to pass bbe-gate's own config validation, so these are only
+    // ever written alongside a real kit.
+    if (KIT_FAVICON) cfg.kit.favicon = KIT_FAVICON;
+    if (KIT_OG_IMAGE) cfg.kit.ogImage = KIT_OG_IMAGE;
   }
   return JSON.stringify(cfg, null, 2) + '\n';
 }
@@ -338,6 +363,15 @@ const BUILD = process.env.BUILD_ID || '1';
 // that stops being true. See vault/core/ONE-SYSTEM-LAW.md.
 const KIT_URL = ${JSON.stringify(KIT_URL)};
 
+// 2026-09-15 head-check rule: the ONE favicon and a branded share image on
+// every page, wired in from day one when the brand's kit names one. Absent
+// when it does not — bbe-gate's head check stays silent until kit.favicon /
+// kit.ogImage exist in bbe.config.json.
+const HEAD_FAVICON = ${JSON.stringify(KIT_FAVICON)};
+const HEAD_OG_IMAGE = ${JSON.stringify(KIT_OG_IMAGE)};
+const HEAD_EXTRA = (HEAD_FAVICON ? \`<link rel="icon" type="image/svg+xml" href="\${HEAD_FAVICON}">\` : '')
+  + (HEAD_OG_IMAGE ? \`<meta property="og:image" content="\${HEAD_OG_IMAGE}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="\${HEAD_OG_IMAGE}">\` : '');
+
 // ---- the brand record ----
 const { slug, file, pack } = resolvePack(path.join(__dir, 'brand'), '${SLUG}', fs, path);
 const WEB = pack.outputs.web;
@@ -385,6 +419,7 @@ const html = eng.page({
   desc: \`\${NAME} — a new surface on the Brand Builder Engine.\`,
   canonical: eng.abs(''),
   body,
+  extraHead: HEAD_EXTRA,
   shell: 'bare',
   bare: { mainAttrs: ' class="wrap"', bodyAttrs: ' class="surface-body"' }
 });
@@ -520,6 +555,15 @@ const BRAND = TOKENS.identity?.name || '${NAME}';
 const KIT_URL = ${JSON.stringify(KIT_URL)};
 const KIT_LINK = KIT_URL ? \`<link rel="stylesheet" href="\${KIT_URL}">\` : '';
 
+// 2026-09-15 head-check rule: the ONE favicon and a branded share image on
+// every page, wired in from day one when the brand's kit names one. Absent
+// when it does not — bbe-gate's head check stays silent until kit.favicon /
+// kit.ogImage exist in bbe.config.json.
+const HEAD_FAVICON = ${JSON.stringify(KIT_FAVICON)};
+const HEAD_OG_IMAGE = ${JSON.stringify(KIT_OG_IMAGE)};
+const HEAD_EXTRA = (HEAD_FAVICON ? \`<link rel="icon" type="image/svg+xml" href="\${HEAD_FAVICON}">\` : '')
+  + (HEAD_OG_IMAGE ? \`<meta property="og:image" content="\${HEAD_OG_IMAGE}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="\${HEAD_OG_IMAGE}">\` : '');
+
 const swatches = Object.entries(TOKENS.light)
   .map(([k, v]) => \`<li><i style="background:var(\${cssVarName(k)})"></i><b>\${esc(k)}</b><code>\${esc(v)}</code></li>\`)
   .join('');
@@ -528,7 +572,7 @@ const PAGE = \`<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>\${esc(BRAND)}</title>
 <meta name="robots" content="noindex, nofollow">
-\${KIT_LINK}<style>\${TOKENS_CSS}\${STRUCTURE}</style>
+\${HEAD_EXTRA}\${KIT_LINK}<style>\${TOKENS_CSS}\${STRUCTURE}</style>
 </head><body class="surface-body"><main class="wrap">
 <h1>\${esc(BRAND)}</h1>
 <p>A new Worker surface on the Brand Builder Engine. Nothing in <code>src/index.js</code>

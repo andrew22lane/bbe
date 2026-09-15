@@ -62,5 +62,8 @@ jobs:
       - name: kit-drift check (ONE-SYSTEM-LAW)
         run: node test/kit-check.mjs
 
+      - name: head check (2026-09-15 favicon + share-image rule)
+        run: node test/head-check.mjs
+
       - name: new-surface smoke test (site + worker, scaffold to gate)
         run: node test/smoke.mjs

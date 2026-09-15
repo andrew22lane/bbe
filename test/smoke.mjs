@@ -263,6 +263,86 @@ function kitEndToEndCheck() {
   else log(`\nkept: ${dir}`);
 }
 
+// ---------------------------------------------------------------- the head check, end to end
+// head-check.mjs's own test/head-check.mjs unit-tests scanHead directly (cases a-g).
+// This proves bin/bbe-gate WIRES it in correctly: reads kit.favicon/kit.ogImage out of
+// bbe.config.json, prints the "head check ..." / "HEAD: ..." lines, and fails the build
+// on a real HEAD hit — exactly the same split test/kit-check.mjs and kitEndToEndCheck()
+// above already use for the kit check. Runs against its own tiny fixture repo, never the
+// scaffolded site/worker lanes, so nothing there can make this pass or fail for the wrong
+// reason.
+function headEndToEndCheck() {
+  log('');
+  log('--- head check (bin/bbe-gate, end to end) ---');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbe-smoke-head-'));
+  const pack = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'fixture.brandpack.json'), 'utf8'));
+  const FAVICON = pack.outputs.web.kit.favicon;
+  const OG_IMAGE = pack.outputs.web.kit.ogImage;
+
+  fs.mkdirSync(path.join(dir, 'brand'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'brand', 'fixture.brandpack.json'), JSON.stringify(pack, null, 2));
+
+  const baseCfg = { pack: 'fixture', exclude: [], baseline: 0 };
+  const cfgPath = path.join(dir, 'bbe.config.json');
+  fs.writeFileSync(cfgPath, JSON.stringify(baseCfg, null, 2) + '\n');
+
+  // The kit stylesheet link is a separate, unrelated check (kit-drift.mjs). Carry it
+  // on every fixture page here so a head-check assertion never fails for a KIT reason.
+  const KIT_URL = 'https://cdn.example.test/fixture-kit-v1.css';
+  const pagePath = path.join(dir, 'index.html');
+  const compliantPage = `<!doctype html><html><head>
+<link rel="stylesheet" href="${KIT_URL}">
+<link rel="icon" type="image/svg+xml" href="${FAVICON}">
+<meta property="og:image" content="${OG_IMAGE}">
+<meta name="twitter:card" content="summary_large_image">
+</head><body></body></html>
+`;
+  fs.writeFileSync(pagePath, compliantPage);
+
+  // skip: kit set, but no favicon/ogImage keys on it at all. Still passes, one-line
+  // warning, never a FAIL — no config change from before this rule existed.
+  const withKitNoHead = { ...baseCfg, kit: { url: KIT_URL } };
+  fs.writeFileSync(cfgPath, JSON.stringify(withKitNoHead, null, 2) + '\n');
+  const noHead = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  check('fixture (a): no kit.favicon/kit.ogImage: gate still passes', noHead.status === 0);
+  check('fixture (a): prints the one-line skip warning',
+    /head check\s+skipped — no "kit\.favicon" or "kit\.ogImage"/.test(noHead.out));
+
+  // fixture (b): both keys set, a compliant page -> PASS.
+  const withHead = { ...baseCfg, kit: { url: KIT_URL, favicon: FAVICON, ogImage: OG_IMAGE } };
+  fs.writeFileSync(cfgPath, JSON.stringify(withHead, null, 2) + '\n');
+  const pass = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  check('fixture (b): compliant page -> bbe-gate passes', pass.status === 0 && /^PASS$/m.test(pass.out));
+  check('fixture (b): reports zero HEAD hits', /HEAD hits: 0/.test(pass.out));
+  check('fixture (b): the head-check line names the favicon URL', pass.out.includes(FAVICON));
+  fixtureBOutput = pass.out;
+
+  // fixture (c): the favicon link goes missing -> FAIL, one HEAD hit, named. The kit
+  // stylesheet link stays, so the failure is isolated to the head check, not a second,
+  // unrelated KIT hit.
+  fs.writeFileSync(pagePath, `<!doctype html><html><head>
+<link rel="stylesheet" href="${KIT_URL}">
+<meta property="og:image" content="${OG_IMAGE}">
+<meta name="twitter:card" content="summary_large_image">
+</head><body></body></html>
+`);
+  const missingFavicon = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('fixture (c): missing rel=icon -> bbe-gate fails', missingFavicon.status === 1);
+  check('fixture (c): HEAD hit names the file and the miss', /HEAD: index\.html:\d+ missing rel=icon/.test(missingFavicon.out));
+  check('fixture (c): BRAND is still 0 — this is a HEAD failure, not a ratchet failure', /BRAND hits: 0/.test(missingFavicon.out));
+  check('fixture (c): KIT is still 0 — the failure is isolated to the head check', /KIT hits: 0/.test(missingFavicon.out));
+  fixtureCOutput = missingFavicon.out;
+
+  // Restore a compliant page before cleanup so a --keep run inspects a passing repo.
+  fs.writeFileSync(pagePath, compliantPage);
+
+  if (!KEEP) fs.rmSync(dir, { recursive: true, force: true });
+  else log(`\nkept: ${dir}`);
+}
+
+let fixtureBOutput = '';
+let fixtureCOutput = '';
+
 log(`bbe new-surface smoke test — @andrew22lane/bbe ${JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version}`);
 
 log('');
@@ -298,9 +378,17 @@ check('refuses an unknown --kind', badKind.status === 1 && /must be site or work
 const dirs = [lane('site'), lane('worker')];
 
 kitEndToEndCheck();
+headEndToEndCheck();
 
 if (!KEEP) for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
 else log(`\nkept: ${dirs.join(' ')}`);
+
+if (process.env.BBE_PRINT_HEAD_FIXTURES) {
+  log('\n--- fixture (b) gate output, verbatim ---');
+  log(fixtureBOutput);
+  log('--- fixture (c) gate output, verbatim ---');
+  log(fixtureCOutput);
+}
 
 log('');
 if (failures) {
