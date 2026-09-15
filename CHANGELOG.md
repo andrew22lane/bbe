@@ -32,6 +32,18 @@ in on day one, rather than a rule that has to be remembered per page.
   checked)`, and each hit as `HEAD: <file>:<line> <reason>`. Two keys absent (or no
   `kit` object at all) prints a one-line skip warning, same style as the kit check's,
   never a FAIL.
+- **`buildDir`: the kit and head checks now read built pages.** Found while verifying
+  the head check: on a site from `bbe new-surface --kind site`, built with
+  `npm run build`, `bbe-gate` printed `head check ... (0 files checked)` and PASS. An
+  engine site's pages only exist in `dist/`, which the gate never read. New optional
+  top-level key `"buildDir": "dist"`. When set, the head check reads every `.html` page
+  there, the kit check runs its link-first half there (the reserved-token half stays on
+  source), the directory is kept out of the source walks and the hex ratchet so nothing
+  counts twice, and a missing directory exits 2 with "build first". The reusable workflow
+  runs `npm run build` before the gate when `buildDir` is set (new `build-command`
+  input). `bbe new-surface --kind site` writes `"buildDir": "dist"`. **A head check that
+  reads zero pages now exits 2.** A kit check that reads zero pages prints a
+  `KIT WARNING` and still passes, so no v1.3.1 consumer goes red on upgrade.
 - **Href/content resolution reuses kit-drift.mjs's own escaping logic**, exported for
   this: `isPageFile` (what counts as a page, so the two scanners can never disagree),
   `resolveTemplateVar` (a bare `${identifier}` href resolved via that identifier's own

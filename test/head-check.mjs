@@ -14,6 +14,12 @@
 //   f. page-specific og:image different from kit.ogImage -> PASS
 //   g. favicon inside a JS template string (worker-rendered page) -> detected as present
 //
+// Cases (h)-(j), added the same day for buildDir, after a scaffolded engine site
+// gated "(0 files checked)" and PASS because its pages only exist in dist/:
+//   h. engine site: no buildDir reads 0 files; buildDir "dist" reads the built page
+//   i. a built page missing rel=icon -> a hit named dist/index.html
+//   j. a buildDir the defaults do not exclude ("public") is read once, not twice
+//
 // Same shape as kit-check.mjs: build a throwaway fixture repo, call the
 // scanner directly, assert on its return value. The gate's own CLI wiring
 // (bin/bbe-gate reading bbe.config.json's kit.favicon/kit.ogImage, printing
@@ -157,6 +163,54 @@ return \`<!doctype html><html><head>
   const r = scanHead(fx.dir, { favicon: FAVICON, ogImage: OG_IMAGE }, {});
   probe('case g: favicon inside a JS template string, resolved via same-file var -> detected as present, zero hits', r.hits.length === 0);
   probe('case g: the .js page was actually checked (carries <head>/</head>)', r.filesChecked === 1);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case h
+// The 2026-09-15 blind spot. An engine site: build.mjs holds no <head>, the page
+// only exists in dist/. Without buildDir the scanner reads nothing (the default
+// excludes skip dist). With it, the built page is read and reported by its real path.
+{
+  const fx = fixture();
+  fx.write('build.mjs', `import { createEngine } from '@andrew22lane/bbe/engine';\nconsole.log('builds dist/index.html');\n`);
+  fx.write('dist/index.html', `<!doctype html><html><head>\n${COMPLIANT_HEAD}\n</head><body></body></html>`);
+  const blind = scanHead(fx.dir, { favicon: FAVICON, ogImage: OG_IMAGE }, {});
+  probe('case h: engine site, no buildDir -> zero files checked (the blind spot, still visible as 0)', blind.filesChecked === 0);
+  const r = scanHead(fx.dir, { favicon: FAVICON, ogImage: OG_IMAGE }, { buildDir: 'dist' });
+  probe('case h: buildDir "dist" -> the built page is checked', r.filesChecked === 1 && r.builtFilesChecked === 1);
+  probe('case h: compliant built page -> zero hits', r.hits.length === 0);
+  const slashed = scanHead(fx.dir, { favicon: FAVICON, ogImage: OG_IMAGE }, { buildDir: './dist/' });
+  probe('case h: "./dist/" means the same directory as "dist"', slashed.builtFilesChecked === 1);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case i
+{
+  const fx = fixture();
+  fx.write('dist/index.html', `<!doctype html><html><head>
+<meta property="og:image" content="${OG_IMAGE}">
+<meta name="twitter:card" content="summary_large_image">
+</head><body></body></html>`);
+  fx.write('dist/about/index.html', `<!doctype html><html><head>\n${COMPLIANT_HEAD}\n</head><body></body></html>`);
+  const r = scanHead(fx.dir, { favicon: FAVICON, ogImage: OG_IMAGE }, { buildDir: 'dist' });
+  const hit = r.hits.find((h) => h.reason === 'missing rel=icon');
+  probe('case i: built page missing rel=icon -> a hit', !!hit);
+  probe('case i: the hit names the built file by its repo path', hit && hit.file === join('dist', 'index.html'));
+  probe('case i: nested built pages are read too', r.builtFilesChecked === 2 && r.hits.length === 1);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case j
+// A buildDir the defaults do NOT exclude ("public") must not be read twice, once
+// by the source walk and once as built output.
+{
+  const fx = fixture();
+  fx.write('public/index.html', `<!doctype html><html><head>
+<meta name="twitter:card" content="summary_large_image">
+</head><body></body></html>`);
+  const r = scanHead(fx.dir, { favicon: FAVICON, ogImage: OG_IMAGE }, { buildDir: 'public' });
+  probe('case j: buildDir "public" -> read once, not twice', r.filesChecked === 1 && r.builtFilesChecked === 1);
+  probe('case j: so each miss is reported once', r.hits.filter((h) => h.reason === 'missing rel=icon').length === 1);
   rmSync(fx.dir, { recursive: true, force: true });
 }
 
