@@ -369,8 +369,13 @@ const KIT_URL = ${JSON.stringify(KIT_URL)};
 // kit.ogImage exist in bbe.config.json.
 const HEAD_FAVICON = ${JSON.stringify(KIT_FAVICON)};
 const HEAD_OG_IMAGE = ${JSON.stringify(KIT_OG_IMAGE)};
-const HEAD_EXTRA = (HEAD_FAVICON ? \`<link rel="icon" type="image/svg+xml" href="\${HEAD_FAVICON}">\` : '')
-  + (HEAD_OG_IMAGE ? \`<meta property="og:image" content="\${HEAD_OG_IMAGE}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="\${HEAD_OG_IMAGE}">\` : '');
+// The engine's head() already writes og:image, twitter:image and twitter:card from
+// ctx.ogDefault, so the kit share image goes in THERE (one tag, the right one) and
+// only its size hints go in extraHead. The favicon goes in ctx.headMeta, which the
+// engine prints BEFORE its own /assets/ favicon links. Never add a second og:image:
+// preview apps read the first one, and the engine's local default does not exist.
+const HEAD_META = HEAD_FAVICON ? \`\\n<link rel="icon" type="image/svg+xml" href="\${HEAD_FAVICON}"/>\` : '';
+const HEAD_EXTRA = HEAD_OG_IMAGE ? \`<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">\` : '';
 
 // ---- the brand record ----
 const { slug, file, pack } = resolvePack(path.join(__dir, 'brand'), '${SLUG}', fs, path);
@@ -393,7 +398,8 @@ const eng = createEngine({
   BUILD,
   themeColor: WEB.identity?.themeColor || ROLES.inkValue,
   ogSiteName: NAME,
-  ogDefault: \`\${SITE}\${BASE}/assets/og-default.png\`,
+  ogDefault: HEAD_OG_IMAGE || \`\${SITE}\${BASE}/assets/og-default.png\`,
+  headMeta: HEAD_META,
   cssHead: () => (KIT_URL ? \`<link rel="stylesheet" href="\${KIT_URL}">\` : '') + \`<style>\${CSS}</style>\`
 });
 
