@@ -180,6 +180,10 @@ function bbeConfig() {
     pack: SLUG,
     exclude: [],
     baseline: 0,
+    // A site's pages only exist after `npm run build` (engine/lib.mjs writes every
+    // head), so the gate reads dist/ for the kit link, the favicon and the share
+    // image. A worker's page lives in src/, which the gate already reads.
+    ...(KIND === 'site' ? { buildDir: 'dist' } : {}),
     note: `Ratchet, not a target. \`npx bbe-gate\` fails only when the BRAND count (scanned against this repo's own brand/${SLUG}.brandpack.json mirror) rises above "baseline". Scaffolded by @andrew22lane/bbe ${PKG.version} new-surface at zero, because a surface that starts on the engine and reads every colour from the pack has nothing to count. "exclude" is ADDITIVE to the gate's defaults (node_modules, .git, dist, dot-paths, tools) and should match this repo's row in vault/core/engine/estate.json, so the CI number and the nightly number are the same number. Lower "baseline" with \`npx bbe-gate --write-baseline\`; if it ever needs raising, something typed a brand fact into code and that is the bug, not this file.`
   };
   if (KIT_URL) {
@@ -645,7 +649,7 @@ function readme() {
 build.mjs      structure and routes. zero brand facts.
 site.css       structure. every colour is var(--bbe-*).
 brand/         MIRROR of the vault pack. never edited here.
-bbe.config.json  pack, excludes, and the gate's ratchet baseline
+bbe.config.json  pack, excludes, the gate's ratchet baseline, and buildDir (dist)
 tools/         pack-parity.mjs
 \`\`\``;
   const layoutWorker = `\`\`\`

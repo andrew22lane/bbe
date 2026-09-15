@@ -63,7 +63,7 @@
 import { readFileSync } from 'node:fs';
 import { relative, resolve, extname } from 'node:path';
 import { walkFiles, isExcludedPath, DEFAULT_EXCLUDE } from './brand-drift.mjs';
-import { isPageFile, resolveTemplateVar, lineAt } from './kit-drift.mjs';
+import { isPageFile, resolveTemplateVar, lineAt, builtFiles, normalizeBuildDir } from './kit-drift.mjs';
 
 const PAGE_EXT = ['.html', '.mjs', '.js', '.cjs'];
 
@@ -128,20 +128,27 @@ function resolveValue(raw, text) {
  * @param {{favicon?:string, ogImage?:string}|null} kitConfig  the same object
  *   bbe.config.json's "kit" key already holds — url/local/reserved are
  *   ignored here, only favicon/ogImage matter.
- * @param {{exclude?: string[]}} opts  ADDITIVE to brand-drift's DEFAULT_EXCLUDE.
+ * @param {{exclude?: string[], buildDir?: string}} opts  `exclude` is ADDITIVE to
+ *   brand-drift's DEFAULT_EXCLUDE. `buildDir` (repo-relative, e.g. "dist") also
+ *   reads every .html page a build wrote there; see kit-drift.mjs builtFiles().
  */
 export function scanHead(repoRoot, kitConfig, opts = {}) {
   const wantFavicon = !!(kitConfig && typeof kitConfig.favicon === 'string' && kitConfig.favicon);
   const wantOgImage = !!(kitConfig && typeof kitConfig.ogImage === 'string' && kitConfig.ogImage);
 
   if (!wantFavicon && !wantOgImage) {
-    return { hits: [], filesChecked: 0, faviconChecked: false, ogImageChecked: false };
+    return { hits: [], filesChecked: 0, builtFilesChecked: 0, faviconChecked: false, ogImageChecked: false };
   }
 
   const absRepo = resolve(repoRoot);
-  const exclude = [...DEFAULT_EXCLUDE, ...(opts.exclude || [])];
+  const buildDir = opts.buildDir ? normalizeBuildDir(opts.buildDir) : null;
+  // The build dir is read once, below, as built output. The source walk stays out of
+  // it, so a buildDir the defaults do not already exclude ("public", "out") is never
+  // read twice.
+  const exclude = [...DEFAULT_EXCLUDE, ...(opts.exclude || []), ...(buildDir ? [buildDir] : [])];
   const hits = [];
   let filesChecked = 0;
+  let builtFilesChecked = 0;
 
   for (const f of walkFiles(absRepo)) {
     const rel = relative(absRepo, f);
@@ -153,7 +160,28 @@ export function scanHead(repoRoot, kitConfig, opts = {}) {
     try { text = readFileSync(f, 'utf8'); } catch { continue; }
     if (!isPageFile(ext, text)) continue;
     filesChecked++;
+    checkPage(rel, text);
+  }
 
+  // Pages a build wrote. An engine site has none in its source: build.mjs calls
+  // engine/lib.mjs head() and the page only exists in dist/. Found 2026-09-15 on a
+  // fresh `bbe new-surface --kind site`, where this check read 0 files and passed.
+  // Only .html here, since a built .js bundle is a copy of source the walk above
+  // already read.
+  if (buildDir) {
+    for (const { abs, rel } of builtFiles(absRepo, buildDir, [...DEFAULT_EXCLUDE, ...(opts.exclude || [])])) {
+      if (extname(abs).toLowerCase() !== '.html') continue;
+      let text;
+      try { text = readFileSync(abs, 'utf8'); } catch { continue; }
+      filesChecked++;
+      builtFilesChecked++;
+      checkPage(rel, text);
+    }
+  }
+
+  return { hits, filesChecked, builtFilesChecked, faviconChecked: wantFavicon, ogImageChecked: wantOgImage };
+
+  function checkPage(rel, text) {
     // ---------------------------------------------------------- (a) favicon
     if (wantFavicon) {
       const links = findIconLinks(text);
@@ -190,6 +218,4 @@ export function scanHead(repoRoot, kitConfig, opts = {}) {
       }
     }
   }
-
-  return { hits, filesChecked, faviconChecked: wantFavicon, ogImageChecked: wantOgImage };
 }

@@ -130,8 +130,54 @@ function lane(kind) {
     && new RegExp(`uses: andrew22lane/bbe/\\.github/workflows/bbe-gate\\.yml@v${PKG_VERSION.replace(/\./g, '\\.')}`).test(fs.readFileSync(wf, 'utf8')));
 
   gateConfigChecks(dir);
+  if (kind === 'site') builtOutputChecks(dir);
 
   return dir;
+}
+
+// ---------------------------------------------------------------- built output (buildDir)
+// The 2026-09-15 blind spot: an engine site's pages only exist in dist/, so the head
+// check on a fresh scaffold read "(0 files checked)" and passed. The scaffold now writes
+// "buildDir": "dist", and these prove the gate actually reads the built page.
+function builtOutputChecks(dir) {
+  const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'bbe.config.json'), 'utf8'));
+  check('site: bbe.config.json names buildDir "dist"', cfg.buildDir === 'dist');
+
+  const gate = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  const head = /head check .*\((\d+) files checked, (\d+) of them in dist\/\)/.exec(gate.out);
+  check('site: the head check reads the built page, not zero files', gate.status === 0 && !!head && Number(head[2]) >= 1,
+    head ? `${head[1]} files, ${head[2]} built` : 'no head check line');
+  const kit = /kit check .*\(\d+ files checked, (\d+) pages, (\d+) of them in dist\/\)/.exec(gate.out);
+  check('site: the kit link check reads the built page', !!kit && Number(kit[2]) >= 1, kit ? `${kit[2]} built pages` : 'no kit check line');
+  check('site: no KIT WARNING once buildDir is set', !/KIT WARNING/.test(gate.out));
+
+  // Break the built page's favicon: the gate must now see it, by its dist/ path.
+  const html = path.join(dir, 'dist', 'index.html');
+  const good = fs.readFileSync(html, 'utf8');
+  fs.writeFileSync(html, good.replace(/<link rel="icon"[^>]*cdn\.brandbuilderengine\.com[^>]*>/, ''));
+  const broken = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('site: a built page missing the kit favicon fails the gate', broken.status === 1 && /HEAD: dist\/index\.html:\d+ missing rel=icon|HEAD: dist\/index\.html:\d+ favicon .* != kit\.favicon/.test(broken.out));
+  fs.writeFileSync(html, good);
+
+  // No build yet: stop with "build first", never a blind pass.
+  fs.renameSync(path.join(dir, 'dist'), path.join(dir, 'dist-held'));
+  const unbuilt = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('site: buildDir missing -> exit 2, says build first', unbuilt.status === 2 && /does not exist/.test(unbuilt.out) && /npm run build/.test(unbuilt.out));
+  fs.renameSync(path.join(dir, 'dist-held'), path.join(dir, 'dist'));
+
+  // The same site with buildDir removed is the old blind config: the head check must fail loud.
+  const cfgPath = path.join(dir, 'bbe.config.json');
+  const original = fs.readFileSync(cfgPath, 'utf8');
+  const { buildDir, ...noBuildDir } = cfg;
+  fs.writeFileSync(cfgPath, JSON.stringify(noBuildDir, null, 2) + '\n');
+  const blind = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('site: no buildDir -> head check read ZERO pages -> exit 2, never PASS', blind.status === 2 && /read ZERO pages/.test(blind.out) && !/^PASS$/m.test(blind.out));
+  check('site: no buildDir -> the kit check warns about zero pages', /KIT WARNING: the link-first half read 0 pages/.test(blind.out));
+  const blindJson = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate'), '--json'], dir, { allowFail: true });
+  let parsed = null;
+  try { parsed = JSON.parse(blindJson.out); } catch {}
+  check('site: --json reports the blind head check as not ok', blindJson.status === 2 && !!parsed && parsed.ok === false && parsed.head.blind === true && parsed.kit.blind === true);
+  fs.writeFileSync(cfgPath, original);
 }
 
 const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;

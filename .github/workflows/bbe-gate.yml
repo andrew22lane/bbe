@@ -16,11 +16,14 @@ name: bbe-gate (reusable)
 #
 # What it runs, against the caller's checkout:
 #   1. npm ci when there is a lockfile, npm install when there is not
-#   2. bbe-gate --selftest   — the scanner plants a defect in a fixture and asserts RED
-#   3. bbe-gate              — the ratchet, against the caller's bbe.config.json
+#   2. the build, ONLY when bbe.config.json names a "buildDir"
+#   3. bbe-gate --selftest   — the scanner plants a defect in a fixture and asserts RED
+#   4. bbe-gate              — the ratchet, against the caller's bbe.config.json
 #
-# Nothing here builds the consumer's site or deploys anything. A repo that also
-# wants its build checked adds its own job next to the `uses:` one.
+# Step 2 exists because an engine site writes its pages at build time. Its source
+# holds no page, so the kit link check and the head check have nothing to read until
+# the build runs. A repo with no "buildDir" skips it and runs exactly as before.
+# Nothing here deploys anything.
 
 on:
   workflow_call:
@@ -40,6 +43,11 @@ on:
         required: false
         type: string
         default: ''
+      build-command:
+        description: 'Runs before the gate when bbe.config.json names a "buildDir". Ignored otherwise.'
+        required: false
+        type: string
+        default: 'npm run build'
 
 permissions:
   contents: read
@@ -71,6 +79,18 @@ jobs:
           else
             echo "no lockfile -> npm install"
             npm install --no-audit --no-fund
+          fi
+
+      - name: build (only when bbe.config.json names a buildDir)
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: |
+          BUILD_DIR=$(node -e "try{process.stdout.write(String(require('./bbe.config.json').buildDir||''))}catch(e){}")
+          if [ -n "$BUILD_DIR" ]; then
+            echo "buildDir $BUILD_DIR -> $BUILD_COMMAND"
+            sh -c "$BUILD_COMMAND"
+          else
+            echo "no buildDir in bbe.config.json -> nothing to build"
           fi
 
       - name: brand-drift selftest

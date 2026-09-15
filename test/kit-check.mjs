@@ -223,5 +223,48 @@ console.log('\n  kit-drift.mjs — kit-check\n');
   rmSync(fx.dir, { recursive: true, force: true });
 }
 
+// ------------------------------------------------------------------ case 12
+// buildDir, added 2026-09-15. An engine site holds no page in its source, so the
+// link-first half read nothing. pagesChecked makes that visible; buildDir fixes it.
+{
+  const fx = fixture();
+  fx.write('site.css', `.hero{padding:2rem}\n`);
+  fx.write('dist/index.html', `<!doctype html><html><head>
+<link rel="stylesheet" href="${KIT_URL}"><style>.hero{padding:2rem}</style>
+</head><body></body></html>`);
+  const blind = scanKit(fx.dir, { url: KIT_URL }, {});
+  probe('case 12: engine site, no buildDir -> zero pages checked (reserved half still ran)', blind.pagesChecked === 0 && blind.filesChecked === 1);
+  const r = scanKit(fx.dir, { url: KIT_URL }, { buildDir: 'dist' });
+  probe('case 12: buildDir "dist" -> the built page is checked', r.pagesChecked === 1 && r.builtPagesChecked === 1);
+  probe('case 12: kit linked first in the built page -> zero hits', r.hits.length === 0);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 13
+{
+  const fx = fixture();
+  fx.write('dist/index.html', `<!doctype html><html><head>
+<link rel="stylesheet" href="/other.css">
+</head><body></body></html>`);
+  const r = scanKit(fx.dir, { url: KIT_URL }, { buildDir: 'dist' });
+  const hit = r.hits.find((h) => /does not link the kit/.test(h.reason));
+  probe('case 13: built page that never links the kit -> a hit', !!hit);
+  probe('case 13: the hit names the built file by its repo path', hit && hit.file === join('dist', 'index.html'));
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 14
+// Only the link-first half reads built pages. Built CSS is the source CSS plus what
+// the engine writes, and an engine `body{}` rule is not the surface's to fix.
+{
+  const fx = fixture();
+  fx.write('dist/index.html', `<!doctype html><html><head>
+<link rel="stylesheet" href="${KIT_URL}"><style>body{margin:0}</style>
+</head><body></body></html>`);
+  const r = scanKit(fx.dir, { url: KIT_URL }, { buildDir: 'dist' });
+  probe('case 14: reserved selector in built CSS -> not flagged (reserved half stays on source)', r.hits.length === 0 && r.builtPagesChecked === 1);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
 console.log(`\n  ${failures === 0 ? 'kit-check PASS' : `kit-check FAIL, ${failures} problem(s)`}\n`);
 process.exit(failures === 0 ? 0 : 1);
