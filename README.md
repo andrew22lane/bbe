@@ -47,7 +47,7 @@ Andrew's call, not a blocker.
 ## Install
 
 ```
-npm install @andrew22lane/bbe@1.4.0
+npm install @andrew22lane/bbe@1.5.0
 ```
 
 That is the GitHub Packages form and it needs a token. What every consumer in the
@@ -55,7 +55,7 @@ estate actually ships is the **git tag** form, which needs no registry, no `.npm
 and no secret anywhere:
 
 ```json
-"dependencies": { "@andrew22lane/bbe": "github:andrew22lane/bbe#v1.4.0" }
+"dependencies": { "@andrew22lane/bbe": "github:andrew22lane/bbe#v1.5.0" }
 ```
 
 Either way, pin an EXACT version. No carets, no ranges, no branch names. A range
@@ -191,7 +191,7 @@ The gate's CI steps live in `.github/workflows/bbe-gate.yml` in this repo, behin
 ```yaml
 jobs:
   brand-gate:
-    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.4.0
+    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.5.0
 ```
 
 It checks out, sets up Node, installs (`npm ci` with a lockfile, `npm install`
