@@ -3,6 +3,45 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
+## v1.6.0 — one ambient background video per page, as a block
+
+Andrew ruled 2026-09-16, an exception to the design standard: ONE ambient background
+video per page, hero only, slow, low-contrast, behind a scrim, no faces or text in the
+clip, poster frame under reduced-motion and on slow connections, never behind a form or
+pricing table. Every other section still uses CSS motion or stays still. This makes the
+recipe a block so no project hand-rolls it again.
+
+- **`engine/bg-video.mjs`** (new): `bgVideoCSS()`, `bgVideoScript()`, `bgVideo({mp4,
+  webm, poster, posterAlt, mobileMp4, mobile, scrim, content, tag, className, attrs})`.
+  Two brand-blind custom properties, `--bgv-fade` (default `.6s`) and `--bgv-scrim`
+  (default `rgba(0,0,0,.55)`) — a kit sets them, the engine ships no color. Sources carry
+  `data-src`, never `src`, so nothing downloads until an IntersectionObserver says the
+  section is in view; the script bails outright on reduced motion, a saveData/2g/3g
+  connection, or a narrow viewport with no `data-mobile="video"` opt-in. No `autoplay`
+  attribute ever — the script starts playback itself, the only way that is reliable
+  cross-browser with `muted`.
+- **`createEngine` gains `bgVideo`, `bgVideoCSS`, `bgVideoScript`.** `page()` appends
+  `bgVideoScript()` right after the reveal script (or, on a `shell:'bare'` page, in the
+  equivalent slot) ONLY when the body contains `class="bg-video`. A page that does not
+  use the block ships the exact bytes it always did — proven by `test/bg-video.mjs` and
+  unchanged by `test/smoke.mjs`.
+- **`tools/make-loop.sh`** (new) + `bbe loop` subcommand: trims, scales to 16:9, strips
+  audio, seals the loop seam with a 1s crossfade, optionally tints toward a brand color,
+  and writes the five files a `bgVideo()` call needs (`.mp4`, `.webm`, `-mobile.mp4`,
+  `-poster.webp`, `-poster.jpg`) plus a size table. Accepts `lavfi:<spec>` so a loop can
+  be synthesized with no stock footage and no download.
+- **`bbe-gate` gains a `bg-video` check**, `tools/bg-video-check.mjs`, wired in next to
+  the kit and head checks. It reads ONLY `bbe.config.json`'s `buildDir` — there is no
+  source fallback, because the markup only exists after a build runs — and unlike kit/head
+  a site that never uses the block, or has not built yet, is SKIPPED, never blind-failed:
+  reading zero pages is normal here, not a partial rollout. It fails a built page that
+  stacks more than one `.bg-video`, a `<video>` missing `muted`, `playsinline`, or
+  `poster=`, or a `.bg-video` with no `bg-video__scrim`.
+- **Docs**: `docs/BG-VIDEO.md`. A brand pack's `expression.motion.moves` array may now
+  include `"bgVideo"` to mark adoption; the gate, not the pack, is what enforces it.
+- Three synthesized sample loops (dh-ink, dh-fog, bex-warm) built with `make-loop.sh`
+  from `lavfi:` sources, no stock footage, no download — sizes in the build's own report.
+
 ## v1.5.0 — the gate reads the pages a build writes
 
 Found while verifying the v1.4.0 head check, the day after it shipped: on a site from
