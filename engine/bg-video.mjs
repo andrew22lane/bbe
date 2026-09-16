@@ -77,6 +77,9 @@ v.pause();
 });
 },{rootMargin:'200px'});
 io.observe(sec);
+document.addEventListener('visibilitychange',function(){
+if(document.visibilityState==='visible'&&sec.__bgvLoaded&&v.paused){var r=sec.getBoundingClientRect();if(r.bottom>0&&r.top<innerHeight){var q=v.play();if(q&&q.catch)q.catch(function(){});}}
+});
 });
 }
 if(document.readyState==='complete')boot();else window.addEventListener('load',boot);

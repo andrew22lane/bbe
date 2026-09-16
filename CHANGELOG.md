@@ -3,6 +3,13 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
+## v1.6.1: the background video resumes when the tab comes back
+
+Found on the demo: a page hidden (tab switch, app pane hidden) pauses the video, and
+the IntersectionObserver never refires because the section never left the viewport,
+so the hero stayed on a frozen frame. The script now listens for `visibilitychange`
+and calls `play()` again when the page is visible and the section is in view.
+
 ## v1.6.0: one ambient background video per page, as a block
 
 Andrew ruled 2026-09-16, an exception to the design standard: ONE ambient background
