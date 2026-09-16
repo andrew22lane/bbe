@@ -3,6 +3,33 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
+## v1.5.0 — the gate reads the pages a build writes
+
+Found while verifying the v1.4.0 head check, the day after it shipped: on a site from
+`bbe new-surface --kind site`, built with `npm run build`, `bbe-gate` printed
+`head check ... (0 files checked)` and PASS. An engine site's pages only exist in
+`dist/` (build.mjs calls `engine/lib.mjs head()`), and the gate only ever read source.
+The kit check's link-first half had the same scope. A gate that checks 0 files and
+passes is not a check.
+
+- **`buildDir`: the kit and head checks now read built pages.** New optional
+  top-level key `"buildDir": "dist"`. When set, the head check reads every `.html` page
+  there, the kit check runs its link-first half there (the reserved-token half stays on
+  source), the directory is kept out of the source walks and the hex ratchet so nothing
+  counts twice, and a missing directory exits 2 with "build first". The reusable workflow
+  runs `npm run build` before the gate when `buildDir` is set (new `build-command`
+  input). `bbe new-surface --kind site` writes `"buildDir": "dist"`. **A check that reads zero
+  pages now exits 2**, head and kit alike: it prints `KIT BLIND` / `read ZERO pages` and
+  fails. Measured across every consumer on `main` the day this landed, one repo is
+  affected by the kit half (`proveit-domain`, an engine site with no source page), and
+  its fix is one `buildDir` line.
+
+- Tests: `test/kit-check.mjs` cases 12-14 and `test/head-check.mjs` cases h-j cover the
+  scanners; `builtOutputChecks()` in `test/smoke.mjs` adds 10 end-to-end checks against
+  the real scaffolded site, including a stripped favicon in `dist/index.html` failing the
+  gate, a missing `dist/` exiting 2, and `--json` reporting `blind: true`.
+- `engine/lib.mjs` is untouched, byte-identical since v1.0.1.
+
 ## v1.4.0 — the head check (one favicon, one default share image)
 
 Andrew, 2026-09-15: "same favicon should be used for all pages created, and a default
@@ -32,20 +59,6 @@ in on day one, rather than a rule that has to be remembered per page.
   checked)`, and each hit as `HEAD: <file>:<line> <reason>`. Two keys absent (or no
   `kit` object at all) prints a one-line skip warning, same style as the kit check's,
   never a FAIL.
-- **`buildDir`: the kit and head checks now read built pages.** Found while verifying
-  the head check: on a site from `bbe new-surface --kind site`, built with
-  `npm run build`, `bbe-gate` printed `head check ... (0 files checked)` and PASS. An
-  engine site's pages only exist in `dist/`, which the gate never read. New optional
-  top-level key `"buildDir": "dist"`. When set, the head check reads every `.html` page
-  there, the kit check runs its link-first half there (the reserved-token half stays on
-  source), the directory is kept out of the source walks and the hex ratchet so nothing
-  counts twice, and a missing directory exits 2 with "build first". The reusable workflow
-  runs `npm run build` before the gate when `buildDir` is set (new `build-command`
-  input). `bbe new-surface --kind site` writes `"buildDir": "dist"`. **A check that reads zero
-  pages now exits 2**, head and kit alike: it prints `KIT BLIND` / `read ZERO pages` and
-  fails. Measured across every consumer on `main` the day this landed, one repo is
-  affected by the kit half (`proveit-domain`, an engine site with no source page), and
-  its fix is one `buildDir` line.
 - **Href/content resolution reuses kit-drift.mjs's own escaping logic**, exported for
   this: `isPageFile` (what counts as a page, so the two scanners can never disagree),
   `resolveTemplateVar` (a bare `${identifier}` href resolved via that identifier's own
