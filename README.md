@@ -293,6 +293,35 @@ share-image tags into every generated page head, and `kit.favicon`/`kit.ogImage`
 into `bbe.config.json`, the moment the pack's `outputs.web.kit` (or `--favicon` /
 `--og-image`) names them. Full law: `vault/core/ONE-SYSTEM-LAW.md` in dh-hub.
 
+### Sites that build their pages: `buildDir`
+
+An engine site has no page in its source. `build.mjs` calls the engine, the engine
+writes each `<head>`, and the page only exists in `dist/` after `npm run build`. So on
+a fresh `bbe new-surface --kind site`, the head check used to print `(0 files checked)`
+and pass. It was reading nothing.
+
+Name the build directory in `bbe.config.json` and the gate reads it too:
+
+```json
+{ "pack": "gabriella", "exclude": [], "baseline": 0, "buildDir": "dist" }
+```
+
+- The head check reads every `.html` page in `buildDir`, and a hit points at the built
+  file (`HEAD: dist/index.html:1 missing rel=icon`).
+- The kit check runs its link-first half on those pages too. The reserved-token half
+  stays on the source, because built CSS is the source CSS plus whatever the engine
+  writes, and the engine isn't the surface's to fix.
+- A named `buildDir` that doesn't exist stops the gate with exit 2 and says to build first.
+- The reusable workflow runs `npm run build` before the gate when `buildDir` is set
+  (override with the `build-command` input). Without `buildDir` it builds nothing.
+- `bbe new-surface --kind site` writes `"buildDir": "dist"` for you.
+
+**A check that reads zero pages fails** with exit 2, head and kit alike, whatever the
+reason. A check that reads nothing and passes isn't a check. Measured across every
+consumer on `main` on 2026-09-15: one repo is affected by the kit half (`proveit-domain`,
+an engine site with no source page). Every other kit repo already has source pages the
+check reads. Adding `buildDir` clears both.
+
 ## How to add a consumer
 
 **For a brand-new surface, use `bbe new-surface` above; it does all of this.** What

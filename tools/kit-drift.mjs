@@ -192,20 +192,64 @@ function collectCssRegions(text, ext) {
   return regions;
 }
 
+// The link-first rule, for one page. Returns a hit, or null. Pulled out of scanKit
+// so a page in the source and a page a build wrote (opts.buildDir) are judged by
+// the same code.
+function linkFirstHit(rel, text, acceptedRefs, acceptedBasenames) {
+  const refs = findStylesheetRefs(text);
+  const embedsKitString = acceptedRefs.some((a) => text.includes(a));
+  if (refs.length === 0) {
+    return embedsKitString ? null
+      : { file: rel, line: 1, reason: 'does not link the kit before any other stylesheet (no stylesheet reference found)' };
+  }
+  if (matchesKit(refs[0].href, text, acceptedRefs, acceptedBasenames)) return null;
+  const kitRefIdx = refs.findIndex((r) => matchesKit(r.href, text, acceptedRefs, acceptedBasenames));
+  if (kitRefIdx === -1) {
+    return embedsKitString ? null
+      : { file: rel, line: lineAt(text, refs[0].index), reason: `does not link the kit before any other stylesheet (found ${refs[0].href || '(unresolved href)'} first)` };
+  }
+  return { file: rel, line: lineAt(text, refs[0].index), reason: `kit not linked FIRST — ${refs[0].href || '(unresolved href)'} loads before it` };
+}
+
+// "dist", "./dist", "dist/" all mean the same build directory.
+export function normalizeBuildDir(dir) {
+  return String(dir).trim().replace(/^\.\//, '').replace(/\/+$/, '');
+}
+
+// The files a build wrote, for a site whose pages only exist after the build runs.
+// An engine site is the case that forced this: build.mjs calls engine/lib.mjs
+// head(), so the source holds no page for a scanner to read. `buildDir` is relative
+// to the repo root. The defaults exclude `dist` from the SOURCE walk, so exclusion
+// here is judged on the path INSIDE buildDir, while each file still reports its
+// repo-relative path (dist/index.html) so a hit points somewhere real.
+export function builtFiles(repoRoot, buildDir, exclude = DEFAULT_EXCLUDE) {
+  const absRepo = resolve(repoRoot);
+  const absBuilt = resolve(absRepo, normalizeBuildDir(buildDir));
+  const out = [];
+  for (const abs of walkFiles(absBuilt)) {
+    if (isExcludedPath(relative(absBuilt, abs), exclude)) continue;
+    out.push({ abs, rel: relative(absRepo, abs) });
+  }
+  return out;
+}
+
 /**
  * Scan a repo for kit violations.
  *
  * @param {string} repoRoot
  * @param {{url?:string, local?:string, reserved?:string[]}|null} kitConfig
- * @param {{exclude?: string[]}} opts  ADDITIVE to brand-drift's DEFAULT_EXCLUDE.
+ * @param {{exclude?: string[], buildDir?: string}} opts  `exclude` is ADDITIVE to
+ *   brand-drift's DEFAULT_EXCLUDE. `buildDir` (repo-relative, e.g. "dist") also runs
+ *   check (a) on every .html page a build wrote there. Check (b) stays on the source.
  */
 export function scanKit(repoRoot, kitConfig, opts = {}) {
   if (!kitConfig || (!kitConfig.url && !kitConfig.local)) {
-    return { hits: [], filesChecked: 0, acceptedRefs: [] };
+    return { hits: [], filesChecked: 0, pagesChecked: 0, builtPagesChecked: 0, acceptedRefs: [] };
   }
 
   const absRepo = resolve(repoRoot);
-  const exclude = [...DEFAULT_EXCLUDE, ...(opts.exclude || [])];
+  const buildDir = opts.buildDir ? normalizeBuildDir(opts.buildDir) : null;
+  const exclude = [...DEFAULT_EXCLUDE, ...(opts.exclude || []), ...(buildDir ? [buildDir] : [])];
   const acceptedRefs = [kitConfig.url, kitConfig.local].filter(Boolean);
   const acceptedBasenames = acceptedRefs.map(basename).filter(Boolean);
   const reserved = Array.isArray(kitConfig.reserved) && kitConfig.reserved.length
@@ -219,6 +263,7 @@ export function scanKit(repoRoot, kitConfig, opts = {}) {
 
   const hits = [];
   let filesChecked = 0;
+  let pagesChecked = 0;
 
   for (const f of walkFiles(absRepo)) {
     const rel = relative(absRepo, f);
@@ -233,30 +278,10 @@ export function scanKit(repoRoot, kitConfig, opts = {}) {
 
     // ---------------------------------------------------------- (a) links first
     if (ext === '.html' || TEMPLATE_EXT.includes(ext)) {
-      // A .html file is always a page. A .mjs/.js/.cjs file is a page only when
-      // it actually assembles one: it must carry BOTH `<head` and `</head>`, not
-      // merely a stylesheet link anywhere in it. The old rule flagged any file
-      // with a `<link rel="stylesheet">` substring ANYWHERE — pages.mjs's
-      // leafletHead() helper returns one such link (Leaflet's own vendor CSS, a
-      // fragment with no head of its own) and was read as "the page" that missed
-      // the kit, when the real page head is assembled elsewhere (lib.mjs).
       if (isPageFile(ext, text)) {
-        const refs = findStylesheetRefs(text);
-        const embedsKitString = acceptedRefs.some((a) => text.includes(a));
-        if (refs.length === 0) {
-          if (!embedsKitString) {
-            hits.push({ file: rel, line: 1, reason: 'does not link the kit before any other stylesheet (no stylesheet reference found)' });
-          }
-        } else if (!matchesKit(refs[0].href, text, acceptedRefs, acceptedBasenames)) {
-          const kitRefIdx = refs.findIndex((r) => matchesKit(r.href, text, acceptedRefs, acceptedBasenames));
-          if (kitRefIdx === -1) {
-            if (!embedsKitString) {
-              hits.push({ file: rel, line: lineAt(text, refs[0].index), reason: `does not link the kit before any other stylesheet (found ${refs[0].href || '(unresolved href)'} first)` });
-            }
-          } else {
-            hits.push({ file: rel, line: lineAt(text, refs[0].index), reason: `kit not linked FIRST — ${refs[0].href || '(unresolved href)'} loads before it` });
-          }
-        }
+        pagesChecked++;
+        const hit = linkFirstHit(rel, text, acceptedRefs, acceptedBasenames);
+        if (hit) hits.push(hit);
       }
     }
 
@@ -297,5 +322,22 @@ export function scanKit(repoRoot, kitConfig, opts = {}) {
     }
   }
 
-  return { hits, filesChecked, acceptedRefs };
+  // ------------------------------------------------------- built pages (buildDir)
+  // Only (a) runs here. Built CSS is the source CSS already checked above plus what
+  // the engine writes, and the engine is not this surface's to fix, so (b) stays on
+  // the source. Only .html: a built .js bundle is a copy of source already read.
+  let builtPagesChecked = 0;
+  if (buildDir) {
+    for (const { abs, rel } of builtFiles(absRepo, buildDir, [...DEFAULT_EXCLUDE, ...(opts.exclude || [])])) {
+      if (extname(abs).toLowerCase() !== '.html') continue;
+      let text;
+      try { text = readFileSync(abs, 'utf8'); } catch { continue; }
+      pagesChecked++;
+      builtPagesChecked++;
+      const hit = linkFirstHit(rel, text, acceptedRefs, acceptedBasenames);
+      if (hit) hits.push(hit);
+    }
+  }
+
+  return { hits, filesChecked, pagesChecked, builtPagesChecked, acceptedRefs };
 }

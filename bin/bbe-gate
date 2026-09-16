@@ -9,7 +9,8 @@
 //   npx bbe-gate --selftest         plant a defect in a fixture, assert the scanner goes RED
 //
 // Exit 0 clean or improved. Exit 1 the BRAND count rose above the baseline.
-// Exit 2 the gate could not run (no config, no pack mirror, bad input).
+// Exit 2 the gate could not run (no config, no pack mirror, bad input, a named
+// buildDir that was never built, or a kit/head check that read zero pages).
 //
 // WHY THIS EXISTS. Before the package, every repo carried its own byte-copy of
 // brand-drift.mjs plus its own brand-gate-check.mjs plus a gate-parity.mjs whose
@@ -50,7 +51,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { scanRepo, DEFAULT_EXCLUDE } from '../tools/brand-drift.mjs';
-import { scanKit } from '../tools/kit-drift.mjs';
+import { scanKit, normalizeBuildDir } from '../tools/kit-drift.mjs';
 import { scanHead } from '../tools/head-check.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -158,10 +159,34 @@ if (config.kit != null) {
   }
 }
 
+// "buildDir": where the build writes pages. An engine site (build.mjs calling
+// engine/lib.mjs head()) has no page in its source at all, so without this the kit
+// link check and the head check read zero pages and pass. Found 2026-09-15 on a fresh
+// `bbe new-surface --kind site`: "head check ... (0 files checked)", then PASS.
+let buildDir = null;
+if (config.buildDir != null) {
+  const raw = typeof config.buildDir === 'string' ? normalizeBuildDir(config.buildDir) : '';
+  const inside = raw && raw !== '.' && !path.isAbsolute(raw)
+    && path.resolve(repoRoot, raw).startsWith(repoRoot + path.sep);
+  if (!inside) {
+    die(`${configSource} "buildDir" must be a directory inside the repo, relative to ${CONFIG_NAME}, e.g. "dist"`);
+  }
+  buildDir = raw;
+}
+
 const packPath = path.join(repoRoot, 'brand', `${config.pack}.brandpack.json`);
 if (!existsSync(packPath)) {
   die(`pack mirror missing at ${packPath}`, [
     'The pack is a MIRROR of the canonical pack in the dh-hub vault. Copy it in.'
+  ]);
+}
+
+// A named buildDir that is not there means the build has not run. Scanning an empty
+// directory would be the same blind pass this key exists to end, so stop instead.
+if (buildDir && config.kit && !existsSync(path.join(repoRoot, buildDir))) {
+  die(`buildDir ${buildDir}/ does not exist, so there are no built pages to check.`, [
+    'The kit and head checks read the pages your build writes. Build first, then gate:',
+    '  npm run build && npx bbe-gate'
   ]);
 }
 
@@ -171,7 +196,11 @@ if (!existsSync(packPath)) {
 // "exclude" by hand to get the same effect. Every one of the seven 2026-09-13 kit mints
 // needed that manual exclude before this; this is the fix so the next one does not.
 const kitLocalExclude = (config.kit && config.kit.local) ? [config.kit.local.replace(/^\.?\//, '')] : [];
-const exclude = [...DEFAULT_EXCLUDE, ...EXTRA_EXCLUDE, ...(config.exclude || []), ...kitLocalExclude];
+// buildDir is build OUTPUT: it carries the pack's colors the engine wrote back into CSS.
+// Kept out of the hex ratchet so a buildDir the defaults do not already skip ("public",
+// "out") never counts the pack against itself. The kit and head scans read it on purpose.
+const buildDirExclude = buildDir ? [buildDir] : [];
+const exclude = [...DEFAULT_EXCLUDE, ...EXTRA_EXCLUDE, ...(config.exclude || []), ...kitLocalExclude, ...buildDirExclude];
 
 // ---------------------------------------------------------------- the scan
 // Positional call, the same exported function vault/core/engine/estate-status.mjs
@@ -192,8 +221,13 @@ const fell = scan.brand.length < config.baseline;
 // the gate needs a runway to zero; a kit violation has no such runway — it is a
 // surface defining its own button, its own font, its own primary colour, which
 // is the exact drift ONE-SYSTEM-LAW.md exists to end. Any hit fails.
-const kitResult = config.kit ? scanKit(repoRoot, config.kit, { exclude: config.exclude || [] }) : null;
+const kitResult = config.kit ? scanKit(repoRoot, config.kit, { exclude: config.exclude || [], buildDir }) : null;
 const kitFailed = !!(kitResult && kitResult.hits.length > 0);
+// A kit check that read zero pages only ran its reserved-token half, so the ONE-SYSTEM
+// link-first rule went unproven. Same posture as the head check: it fails. Measured
+// 2026-09-15 across every consumer on main, one repo is affected (proveit-domain, an
+// engine site with no source page), and its fix is one "buildDir" line.
+const kitBlind = !!(kitResult && kitResult.pagesChecked === 0);
 
 // ---------------------------------------------------------------- the head scan
 // Same no-ratchet posture as the kit scan: this proves every page carries the
@@ -201,16 +235,22 @@ const kitFailed = !!(kitResult && kitResult.hits.length > 0);
 // bug it exists to catch. Independently opt-in per key (kit.favicon,
 // kit.ogImage), so a brand can wire in one before the other, and a repo with
 // neither key set behaves exactly as it did before this check existed.
-const headResult = config.kit ? scanHead(repoRoot, config.kit, { exclude: config.exclude || [] }) : null;
+const headResult = config.kit ? scanHead(repoRoot, config.kit, { exclude: config.exclude || [], buildDir }) : null;
 const headFailed = !!(headResult && headResult.hits.length > 0);
+// The head check is new in 1.4.0, so no repo is live on it yet and a blind run can
+// fail from day one. A check that reads zero pages and passes is not a check. Exit 2,
+// the gate's "could not run" code, because nothing was actually measured.
+const headBlind = !!(headResult && (headResult.faviconChecked || headResult.ogImageChecked) && headResult.filesChecked === 0);
+const exitCode = (rose || kitFailed || headFailed) ? 1 : ((headBlind || kitBlind) ? 2 : 0);
 
 if (JSON_OUT) {
   console.log(JSON.stringify({
-    ok: !rose && !kitFailed && !headFailed,
+    ok: exitCode === 0,
     tool: `@andrew22lane/bbe ${PKG.version}`,
     repo: scan.repo,
     config: configSource,
     pack: config.pack,
+    buildDir,
     exclude,
     scanned: scan.scanned,
     files: scan.files,
@@ -224,6 +264,9 @@ if (JSON_OUT) {
     kit: kitResult ? {
       checked: true,
       filesChecked: kitResult.filesChecked,
+      pagesChecked: kitResult.pagesChecked,
+      builtPagesChecked: kitResult.builtPagesChecked,
+      blind: kitBlind,
       hits: kitResult.hits.length,
       violations: kitResult.hits
     } : { checked: false },
@@ -232,11 +275,13 @@ if (JSON_OUT) {
       faviconChecked: headResult.faviconChecked,
       ogImageChecked: headResult.ogImageChecked,
       filesChecked: headResult.filesChecked,
+      builtFilesChecked: headResult.builtFilesChecked,
+      blind: headBlind,
       hits: headResult.hits.length,
       violations: headResult.hits
     } : { checked: false }
   }, null, 2));
-  process.exit((rose || kitFailed || headFailed) ? 1 : 0);
+  process.exit(exitCode);
 }
 
 say(`brand gate — pack ${config.pack}  (@andrew22lane/bbe ${PKG.version} bbe-gate)`);
@@ -246,6 +291,7 @@ say(`  scanned      ${scan.scanned} of ${scan.files} files`);
 say(`  pack colours ${scan.packColours}`);
 if (config.exclude && config.exclude.length) say(`  also excluded ${config.exclude.join(', ')}`);
 if (kitLocalExclude.length) say(`  kit file exempt from the hex ratchet: ${kitLocalExclude.join(', ')}`);
+if (buildDir) say(`  built output ${buildDir}/  (kit links and head tags are read here too)`);
 say(`  BRAND hits: ${scan.brand.length}  (baseline: ${config.baseline})`);
 for (const b of scan.brand.slice(0, 60)) {
   say(`    ${b.file}:${b.line}  ${b.literal}  -> ${b.packName}`);
@@ -256,9 +302,16 @@ say(`  UNREGISTERED (warn only): ${scan.unregistered.length} hits, ${scan.unregi
 // ---------------------------------------------------------------- the kit report
 if (kitResult) {
   say('');
-  say(`  kit check    ${config.kit.url || config.kit.local}  (${kitResult.filesChecked} files checked)`);
+  const builtKit = buildDir ? `, ${kitResult.builtPagesChecked} of them in ${buildDir}/` : '';
+  say(`  kit check    ${config.kit.url || config.kit.local}  (${kitResult.filesChecked} files checked, ${kitResult.pagesChecked} pages${builtKit})`);
   for (const h of kitResult.hits) say(`  KIT: ${h.file}:${h.line} ${h.reason}`);
   say(`  KIT hits: ${kitResult.hits.length}`);
+  if (kitBlind) {
+    say(`  KIT BLIND: the link-first half read 0 pages, so only the reserved-token half ran.`);
+    say(buildDir
+      ? `             Nothing in ${buildDir}/ or the source is a page. Did the build write where "buildDir" says?`
+      : `             A site whose pages come from a build script has none in its source. Add "buildDir": "dist" to ${CONFIG_NAME}.`);
+  }
 } else {
   // No "kit" object at all: a repo whose brand has none yet keeps passing, not going
   // dark silently. One line, machine-checkable, never a FAIL.
@@ -272,7 +325,8 @@ if (config.kit && (config.kit.favicon || config.kit.ogImage)) {
   const parts = [];
   if (config.kit.favicon) parts.push(`favicon ${config.kit.favicon}`);
   if (config.kit.ogImage) parts.push('og:image');
-  say(`  head check   ${parts.join(' · ')}  (${headResult.filesChecked} files checked)`);
+  const builtHead = buildDir ? `, ${headResult.builtFilesChecked} of them in ${buildDir}/` : '';
+  say(`  head check   ${parts.join(' · ')}  (${headResult.filesChecked} files checked${builtHead})`);
   for (const h of headResult.hits) say(`  HEAD: ${h.file}:${h.line} ${h.reason}`);
   say(`  HEAD hits: ${headResult.hits.length}`);
   if (!config.kit.favicon) say(`  head check   favicon skipped — no "kit.favicon" in ${CONFIG_NAME}`);
@@ -325,7 +379,23 @@ if (rose) {
   console.log(`The baseline ratchets DOWN only — never raise "baseline" in ${CONFIG_NAME} by hand.`);
 }
 
-if (rose || kitFailed || headFailed) process.exit(1);
+if (kitBlind) {
+  console.log('');
+  console.log('FAIL: the kit check read ZERO pages, so nothing proved the kit is linked first.');
+  console.log(buildDir
+    ? `Nothing in ${buildDir}/ or the source is a page. Did the build write where "buildDir" says?`
+    : `A site whose pages come from a build script has none in its source. Add "buildDir": "dist" to ${CONFIG_NAME}, and build before the gate.`);
+}
+
+if (headBlind) {
+  console.log('');
+  console.log('FAIL: the head check is set up and read ZERO pages. A check that reads nothing and passes is not a check.');
+  console.log(buildDir
+    ? `Nothing in ${buildDir}/ or the source is a page. Did the build write where "buildDir" says?`
+    : `A site whose pages come from a build script has none in its source. Add "buildDir": "dist" to ${CONFIG_NAME}, and build before the gate.`);
+}
+
+if (exitCode !== 0) process.exit(exitCode);
 
 if (fell) {
   say('');
