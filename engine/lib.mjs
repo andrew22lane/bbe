@@ -146,6 +146,11 @@ document.querySelectorAll('[data-shuffle]').forEach(function(c){var k=[].slice.c
 </script>`;
 }
 
+// The ambient background-video block. See bg-video.mjs; re-exported here so a
+// consumer imports everything from one place, same as crumbScript below.
+export { bgVideo, bgVideoCSS, bgVideoScript } from './bg-video.mjs';
+import { bgVideo as makeBgVideo, bgVideoCSS as makeBgVideoCSS, bgVideoScript as makeBgVideoScript } from './bg-video.mjs';
+
 // A long breadcrumb trail overflows on a phone. Scroll it to the current page.
 export const crumbScript=`<script>(function(){try{var c=document.querySelector('.crumbs .container');if(c&&window.innerWidth<=560&&c.scrollWidth>c.clientWidth){c.scrollLeft=c.scrollWidth;c.classList.add('crumbs-faded');}}catch(e){}})();</script>`;
 
@@ -248,10 +253,14 @@ ${ctx.headTail||''}<script>document.documentElement.className='js'</script>${ld}
   function page({title,desc,canonical,ogImage,jsonld,active,body,extraHead='',extraScript='',noCta=false,noCrumbs=false,noindex=false,shell:chrome='full',bare={}}){
     if(chrome!=='full'&&chrome!=='bare') throw new Error(`page(): shell must be 'full' or 'bare', got ${JSON.stringify(chrome)}`);
     const doc=`<!doctype html><html lang="en"><head>${head({title,desc,canonical,ogImage,jsonld,noindex})}${extraHead}</head>`;
+    // Only a page whose body actually uses the block pays for the script.
+    // Every page that does not carries this branch's bytes exactly as it did
+    // before the block existed — the byte-identity proof this repo ships with.
+    const bgv=body.includes('class="bg-video')?makeBgVideoScript():'';
     if(chrome==='bare') return `${doc}
-<body${bare.bodyAttrs||''}>${bare.lead||''}<main${bare.mainAttrs||''}>${body}</main>${bare.tail||''}${extraScript}</body></html>`;
+<body${bare.bodyAttrs||''}>${bare.lead||''}<main${bare.mainAttrs||''}>${body}</main>${bare.tail||''}${bgv}${extraScript}</body></html>`;
     return `${doc}
-<body${bodyAttrs({noindex})}>${bodyPrefix({noindex})}${navFn(active)}<main>${noCrumbs?'':crumbsNav(jsonld)}${body}</main>${footerFn(noCta)}${revealScript}${shell.scripts||''}${extraScript}${shell.tail||''}</body></html>`;
+<body${bodyAttrs({noindex})}>${bodyPrefix({noindex})}${navFn(active)}<main>${noCrumbs?'':crumbsNav(jsonld)}${body}</main>${footerFn(noCta)}${revealScript}${bgv}${shell.scripts||''}${extraScript}${shell.tail||''}</body></html>`;
   }
 
   // ---- brand-blind JSON-LD. Everything else (Organization, HairSalon,
@@ -259,5 +268,5 @@ ${ctx.headTail||''}<script>document.documentElement.className='js'</script>${ld}
   const breadcrumbLD=items=>({"@context":"https://schema.org","@type":"BreadcrumbList",itemListElement:items.map((it,i)=>({"@type":"ListItem",position:i+1,name:it.name,item:abs(it.path)}))});
   const faqLD=qa=>({"@context":"https://schema.org","@type":"FAQPage",mainEntity:qa.map(([q,a])=>({"@type":"Question",name:q,acceptedAnswer:{"@type":"Answer",text:a}}))});
 
-  return {u,abs,head,page,crumbsNav,crumbScript,revealScript,breadcrumbLD,faqLD,esc,clamp};
+  return {u,abs,head,page,crumbsNav,crumbScript,revealScript,breadcrumbLD,faqLD,esc,clamp,bgVideo:makeBgVideo,bgVideoCSS:makeBgVideoCSS,bgVideoScript:makeBgVideoScript};
 }

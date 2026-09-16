@@ -1,6 +1,6 @@
 {
   "name": "@andrew22lane/bbe",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "The Brand Builder Engine as one package: the shared static-site engine core, the brand-drift and gate-lint gates, the pack token builder, the byte-identity prover, and `bbe new-surface`, which scaffolds a new site or worker that is clean by construction. Consumers install it and pin a version. Nothing is copied.",
   "type": "module",
   "license": "UNLICENSED",
@@ -13,7 +13,7 @@
     "registry": "https://npm.pkg.github.com"
   },
   "scripts": {
-    "test": "node test/kit-check.mjs && node test/head-check.mjs && node test/smoke.mjs"
+    "test": "node test/kit-check.mjs && node test/head-check.mjs && node test/bg-video.mjs && node test/smoke.mjs"
   },
   "exports": {
     "./engine": "./engine/lib.mjs",

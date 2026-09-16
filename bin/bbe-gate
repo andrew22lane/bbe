@@ -53,6 +53,7 @@ import { spawnSync } from 'node:child_process';
 import { scanRepo, DEFAULT_EXCLUDE } from '../tools/brand-drift.mjs';
 import { scanKit, normalizeBuildDir } from '../tools/kit-drift.mjs';
 import { scanHead } from '../tools/head-check.mjs';
+import { scanBgVideo } from '../tools/bg-video-check.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DRIFT = path.join(HERE, '..', 'tools', 'brand-drift.mjs');
@@ -241,7 +242,18 @@ const headFailed = !!(headResult && headResult.hits.length > 0);
 // fail from day one. A check that reads zero pages and passes is not a check. Exit 2,
 // the gate's "could not run" code, because nothing was actually measured.
 const headBlind = !!(headResult && (headResult.faviconChecked || headResult.ogImageChecked) && headResult.filesChecked === 0);
-const exitCode = (rose || kitFailed || headFailed) ? 1 : ((headBlind || kitBlind) ? 2 : 0);
+
+// ---------------------------------------------------------------- the bg-video scan
+// Andrew, 2026-09-16: ONE ambient background video per page, hero only, muted,
+// playsinline, poster, scrim. Unlike kit/head this check reads buildDir ONLY —
+// there is no source fallback, and reading zero pages is never a blind gate: a
+// site that never uses the block is an ordinary site, not a partial rollout.
+// `buildDir` alone gates this on; a repo with none behaves exactly as it did
+// before this check existed.
+const bgVideoResult = buildDir ? scanBgVideo(repoRoot, { exclude: config.exclude || [], buildDir }) : { hits: [], filesChecked: 0, skipped: true, skipReason: 'no buildDir' };
+const bgVideoFailed = bgVideoResult.hits.length > 0;
+
+const exitCode = (rose || kitFailed || headFailed || bgVideoFailed) ? 1 : ((headBlind || kitBlind) ? 2 : 0);
 
 if (JSON_OUT) {
   console.log(JSON.stringify({
@@ -279,7 +291,15 @@ if (JSON_OUT) {
       blind: headBlind,
       hits: headResult.hits.length,
       violations: headResult.hits
-    } : { checked: false }
+    } : { checked: false },
+    bgVideo: {
+      checked: !bgVideoResult.skipped,
+      skipped: bgVideoResult.skipped,
+      skipReason: bgVideoResult.skipReason,
+      filesChecked: bgVideoResult.filesChecked,
+      hits: bgVideoResult.hits.length,
+      violations: bgVideoResult.hits
+    }
   }, null, 2));
   process.exit(exitCode);
 }
@@ -336,6 +356,16 @@ if (config.kit && (config.kit.favicon || config.kit.ogImage)) {
   say(`  head check   skipped — no "kit.favicon" or "kit.ogImage" in ${CONFIG_NAME} (see vault/core/ONE-SYSTEM-LAW.md)`);
 }
 
+// ---------------------------------------------------------------- the bg-video report
+say('');
+if (!bgVideoResult.skipped) {
+  say(`  bg-video     one ambient loop per page, muted+playsinline+poster, scrim required  (${bgVideoResult.filesChecked} pages checked in ${buildDir}/)`);
+  for (const h of bgVideoResult.hits) say(`  BGVIDEO: ${h.file}:${h.line} ${h.reason}`);
+  say(`  BGVIDEO hits: ${bgVideoResult.hits.length}`);
+} else {
+  say(`  bg-video     skipped (${bgVideoResult.skipReason})`);
+}
+
 // ---------------------------------------------------------------- --write-baseline
 if (has('--write-baseline')) {
   if (configSource !== configPath) {
@@ -371,6 +401,11 @@ if (kitFailed) {
 if (headFailed) {
   console.log('');
   console.log(`FAIL: ${headResult.hits.length} HEAD hit(s). Every page carries the ONE favicon and a share image. See vault/core/ONE-SYSTEM-LAW.md.`);
+}
+
+if (bgVideoFailed) {
+  console.log('');
+  console.log(`FAIL: ${bgVideoResult.hits.length} BGVIDEO hit(s). One ambient background video per page, hero only, muted+playsinline+poster, behind a scrim.`);
 }
 
 if (rose) {
