@@ -64,12 +64,13 @@ es.forEach(function(e){
 if(e.isIntersecting){
 if(!sec.__bgvLoaded){
 sec.__bgvLoaded=1;
+v.addEventListener('playing',function(){sec.classList.add('is-playing');});
+v.addEventListener('canplay',function(){var q=v.play();if(q&&q.catch)q.catch(function(){});},{once:true});
 v.querySelectorAll('source[data-src]').forEach(function(s){s.src=s.getAttribute('data-src');});
 v.load();
 }
 var p=v.play();
-if(p&&p.then)p.then(function(){sec.classList.add('is-playing');}).catch(function(){});
-else sec.classList.add('is-playing');
+if(p&&p.catch)p.catch(function(){});
 }else{
 v.pause();
 }
