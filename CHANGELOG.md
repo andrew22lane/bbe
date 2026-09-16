@@ -41,9 +41,11 @@ in on day one, rather than a rule that has to be remembered per page.
   source), the directory is kept out of the source walks and the hex ratchet so nothing
   counts twice, and a missing directory exits 2 with "build first". The reusable workflow
   runs `npm run build` before the gate when `buildDir` is set (new `build-command`
-  input). `bbe new-surface --kind site` writes `"buildDir": "dist"`. **A head check that
-  reads zero pages now exits 2.** A kit check that reads zero pages prints a
-  `KIT WARNING` and still passes, so no v1.3.1 consumer goes red on upgrade.
+  input). `bbe new-surface --kind site` writes `"buildDir": "dist"`. **A check that reads zero
+  pages now exits 2**, head and kit alike: it prints `KIT BLIND` / `read ZERO pages` and
+  fails. Measured across every consumer on `main` the day this landed, one repo is
+  affected by the kit half (`proveit-domain`, an engine site with no source page), and
+  its fix is one `buildDir` line.
 - **Href/content resolution reuses kit-drift.mjs's own escaping logic**, exported for
   this: `isPageFile` (what counts as a page, so the two scanners can never disagree),
   `resolveTemplateVar` (a bare `${identifier}` href resolved via that identifier's own

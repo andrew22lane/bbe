@@ -149,7 +149,7 @@ function builtOutputChecks(dir) {
     head ? `${head[1]} files, ${head[2]} built` : 'no head check line');
   const kit = /kit check .*\(\d+ files checked, (\d+) pages, (\d+) of them in dist\/\)/.exec(gate.out);
   check('site: the kit link check reads the built page', !!kit && Number(kit[2]) >= 1, kit ? `${kit[2]} built pages` : 'no kit check line');
-  check('site: no KIT WARNING once buildDir is set', !/KIT WARNING/.test(gate.out));
+  check('site: no KIT BLIND once buildDir is set', !/KIT BLIND/.test(gate.out));
 
   // Break the built page's favicon: the gate must now see it, by its dist/ path.
   const html = path.join(dir, 'dist', 'index.html');
@@ -172,7 +172,7 @@ function builtOutputChecks(dir) {
   fs.writeFileSync(cfgPath, JSON.stringify(noBuildDir, null, 2) + '\n');
   const blind = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
   check('site: no buildDir -> head check read ZERO pages -> exit 2, never PASS', blind.status === 2 && /read ZERO pages/.test(blind.out) && !/^PASS$/m.test(blind.out));
-  check('site: no buildDir -> the kit check warns about zero pages', /KIT WARNING: the link-first half read 0 pages/.test(blind.out));
+  check('site: no buildDir -> the kit check fails on zero pages', /KIT BLIND: the link-first half read 0 pages/.test(blind.out) && /FAIL: the kit check read ZERO pages/.test(blind.out));
   const blindJson = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate'), '--json'], dir, { allowFail: true });
   let parsed = null;
   try { parsed = JSON.parse(blindJson.out); } catch {}

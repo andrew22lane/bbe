@@ -10,7 +10,7 @@
 //
 // Exit 0 clean or improved. Exit 1 the BRAND count rose above the baseline.
 // Exit 2 the gate could not run (no config, no pack mirror, bad input, a named
-// buildDir that was never built, or a head check that read zero pages).
+// buildDir that was never built, or a kit/head check that read zero pages).
 //
 // WHY THIS EXISTS. Before the package, every repo carried its own byte-copy of
 // brand-drift.mjs plus its own brand-gate-check.mjs plus a gate-parity.mjs whose
@@ -223,9 +223,10 @@ const fell = scan.brand.length < config.baseline;
 // is the exact drift ONE-SYSTEM-LAW.md exists to end. Any hit fails.
 const kitResult = config.kit ? scanKit(repoRoot, config.kit, { exclude: config.exclude || [], buildDir }) : null;
 const kitFailed = !!(kitResult && kitResult.hits.length > 0);
-// A kit check that read zero pages only ran its reserved-token half. That warns and
-// does not fail: v1.3.1 repos already run this check, and an engine site among them
-// would go red on upgrade for a gap that is not new. "buildDir" clears it either way.
+// A kit check that read zero pages only ran its reserved-token half, so the ONE-SYSTEM
+// link-first rule went unproven. Same posture as the head check: it fails. Measured
+// 2026-09-15 across every consumer on main, one repo is affected (proveit-domain, an
+// engine site with no source page), and its fix is one "buildDir" line.
 const kitBlind = !!(kitResult && kitResult.pagesChecked === 0);
 
 // ---------------------------------------------------------------- the head scan
@@ -240,7 +241,7 @@ const headFailed = !!(headResult && headResult.hits.length > 0);
 // fail from day one. A check that reads zero pages and passes is not a check. Exit 2,
 // the gate's "could not run" code, because nothing was actually measured.
 const headBlind = !!(headResult && (headResult.faviconChecked || headResult.ogImageChecked) && headResult.filesChecked === 0);
-const exitCode = (rose || kitFailed || headFailed) ? 1 : (headBlind ? 2 : 0);
+const exitCode = (rose || kitFailed || headFailed) ? 1 : ((headBlind || kitBlind) ? 2 : 0);
 
 if (JSON_OUT) {
   console.log(JSON.stringify({
@@ -306,10 +307,10 @@ if (kitResult) {
   for (const h of kitResult.hits) say(`  KIT: ${h.file}:${h.line} ${h.reason}`);
   say(`  KIT hits: ${kitResult.hits.length}`);
   if (kitBlind) {
-    say(`  KIT WARNING: the link-first half read 0 pages, so only the reserved-token half ran.`);
+    say(`  KIT BLIND: the link-first half read 0 pages, so only the reserved-token half ran.`);
     say(buildDir
-      ? `               Nothing in ${buildDir}/ or the source is a page. Did the build write where "buildDir" says?`
-      : `               A site whose pages come from a build script has none in its source. Add "buildDir": "dist" to ${CONFIG_NAME}.`);
+      ? `             Nothing in ${buildDir}/ or the source is a page. Did the build write where "buildDir" says?`
+      : `             A site whose pages come from a build script has none in its source. Add "buildDir": "dist" to ${CONFIG_NAME}.`);
   }
 } else {
   // No "kit" object at all: a repo whose brand has none yet keeps passing, not going
@@ -376,6 +377,14 @@ if (rose) {
   console.log('');
   console.log(`FAIL: BRAND count rose from ${config.baseline} to ${scan.brand.length}.`);
   console.log(`The baseline ratchets DOWN only — never raise "baseline" in ${CONFIG_NAME} by hand.`);
+}
+
+if (kitBlind) {
+  console.log('');
+  console.log('FAIL: the kit check read ZERO pages, so nothing proved the kit is linked first.');
+  console.log(buildDir
+    ? `Nothing in ${buildDir}/ or the source is a page. Did the build write where "buildDir" says?`
+    : `A site whose pages come from a build script has none in its source. Add "buildDir": "dist" to ${CONFIG_NAME}, and build before the gate.`);
 }
 
 if (headBlind) {

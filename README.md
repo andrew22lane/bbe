@@ -316,11 +316,11 @@ Name the build directory in `bbe.config.json` and the gate reads it too:
   (override with the `build-command` input). Without `buildDir` it builds nothing.
 - `bbe new-surface --kind site` writes `"buildDir": "dist"` for you.
 
-**A head check that reads zero pages fails** with exit 2, whatever the reason. A check
-that reads nothing and passes isn't a check. **A kit check that reads zero pages
-warns** (`KIT WARNING: the link-first half read 0 pages`) and doesn't fail, because
-repos on v1.3.1 already run it and an engine site among them would go red on upgrade
-for a gap that isn't new. Adding `buildDir` clears both.
+**A check that reads zero pages fails** with exit 2, head and kit alike, whatever the
+reason. A check that reads nothing and passes isn't a check. Measured across every
+consumer on `main` on 2026-09-15: one repo is affected by the kit half (`proveit-domain`,
+an engine site with no source page). Every other kit repo already has source pages the
+check reads. Adding `buildDir` clears both.
 
 ## How to add a consumer
 
