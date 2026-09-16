@@ -84,19 +84,23 @@ SCALE_CROP="scale=${WIDTH}:-2,crop=${WIDTH}:${CROP_H}"
 
 # ---- the loop-seal + optional tint filter graph ----
 # 1. trim to exactly $SECONDS_ARG, drop audio, 24fps, scale+crop to WIDTH:16:9
-# 2. split into three copies: the body (0..D-XF), the future seam's tail half
+# 2. split into three copies: the middle (XF..D-XF), the seam's tail half
 #    (D-XF..D) and head half (0..XF)
 # 3. xfade the tail into the head over XF seconds -> the seam
-# 4. concat body + seam -> a $SECONDS_ARG-long clip whose end is a blend of
-#    its own true tail and true head, so a <video loop> repeat never pops
+# 4. concat seam + middle -> a (D-XF)-long clip. It STARTS on the blend of
+#    the true tail into the true head and ENDS on the frame just before the
+#    tail, so a <video loop> repeat lands exactly where the seam begins.
+#    (The first cut put the seam LAST and then looped back to frame 0, a
+#    one-second backward jump every loop. Measured 2026-09-16: last frame vs
+#    first frame 13 dB PSNR. This order: the same frame.)
 # 5. optional tint: partially desaturate, then soft-light blend a solid color
 FILTER="[0:v]trim=0:${SECONDS_ARG},setpts=PTS-STARTPTS,fps=24,${SCALE_CROP},format=yuv420p[base];"
 FILTER+="[base]split=3[a][b][c];"
-FILTER+="[a]trim=0:${BODY_DUR},setpts=PTS-STARTPTS[body];"
+FILTER+="[a]trim=${XF}:${BODY_DUR},setpts=PTS-STARTPTS[body];"
 FILTER+="[b]trim=0:${XF},setpts=PTS-STARTPTS[head];"
 FILTER+="[c]trim=${TAIL_START}:${SECONDS_ARG},setpts=PTS-STARTPTS[tail];"
 FILTER+="[tail][head]xfade=transition=fade:duration=${XF}:offset=0[seam];"
-FILTER+="[body][seam]concat=n=2:v=1:a=0[looped]"
+FILTER+="[seam][body]concat=n=2:v=1:a=0[looped]"
 
 if [ -n "$TINT" ]; then
   DESAT=$(awk -v t="$TINT_STRENGTH" 'BEGIN{ s=1-(t*0.5); printf "%.3f", (s<0.2?0.2:s) }')
@@ -137,7 +141,7 @@ MOBILE_CROP_H=$(awk 'BEGIN{printf "%d", int(960*9/16/2)*2}')
   -c:v libx264 -crf 30 -preset slow -pix_fmt yuv420p -movflags +faststart -an "$MOBILE_MP4"
 
 echo "[5/6] poster jpg + webp..."
-"$FFMPEG" -y -loglevel error -ss 0.5 -i "$TMP_MASTER" -frames:v 1 -q:v 4 "$POSTER_JPG"
+"$FFMPEG" -y -loglevel error -ss "$XF" -i "$TMP_MASTER" -frames:v 1 -q:v 4 "$POSTER_JPG"
 
 # This build's ffmpeg (v9, homebrew) has no libwebp muxer wired to -f image2
 # for a single frame (`Default encoder for format webp ... probably disabled`).
@@ -147,7 +151,7 @@ echo "[5/6] poster jpg + webp..."
 if command -v cwebp >/dev/null 2>&1; then
   cwebp -quiet -q 80 "$POSTER_JPG" -o "$POSTER_WEBP"
 else
-  "$FFMPEG" -y -loglevel error -ss 0.5 -i "$TMP_MASTER" -frames:v 1 -quality 80 "$POSTER_WEBP" \
+  "$FFMPEG" -y -loglevel error -ss "$XF" -i "$TMP_MASTER" -frames:v 1 -quality 80 "$POSTER_WEBP" \
     || echo "  WARN: no cwebp and ffmpeg's webp encoder is unavailable, ${NAME}-poster.webp NOT written"
 fi
 

@@ -3,6 +3,16 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
+## v1.6.2: the loop seam is sealed in the right order
+
+`make-loop.sh` put the crossfaded seam LAST and the `<video loop>` then jumped back
+to frame 0: a one-second backward skip on every repeat, which read as a glitch on
+the demo. Measured 2026-09-16: last frame vs first frame 13 dB PSNR. The seam now
+comes FIRST and the clip ends on the frame just before the tail, so the repeat lands
+where the seam begins; on the bex Liberty Hill clip the seam now measures 17.8 dB
+against an 18.8 dB adjacent-frame baseline, the same as any other frame pair. Output
+is (seconds minus the crossfade) long. Posters are taken after the blend, not inside it.
+
 ## v1.6.1: the background video resumes when the tab comes back
 
 Found on the demo: a page hidden (tab switch, app pane hidden) pauses the video, and
