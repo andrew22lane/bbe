@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# make-loop.sh — turn any source clip (or a synthesized lavfi: source) into the
+# make-loop.sh, turn any source clip (or a synthesized lavfi: source) into the
 # five files engine/bg-video.mjs's bgVideo() call needs: a desktop mp4, a webm,
 # a mobile mp4, and two poster fallbacks (webp + jpg). Every output is silent,
 # 24fps, cropped to 16:9, and the loop seam is sealed with a 1s crossfade of
@@ -27,7 +27,7 @@
 # Requires ffmpeg. This machine's copy: /opt/homebrew/bin/ffmpeg (v9).
 #
 # Targets printed in the size table: desktop mp4 under 2.5 MB for an 8s loop,
-# mobile mp4 under 1 MB. Over either prints a WARN line, never fails the run —
+# mobile mp4 under 1 MB. Over either prints a WARN line, never fails the run ,
 # a slow loop or a busier tint pushes both up, and that is a judgment call for
 # whoever is looking at the table, not a hard gate.
 
@@ -148,7 +148,7 @@ if command -v cwebp >/dev/null 2>&1; then
   cwebp -quiet -q 80 "$POSTER_JPG" -o "$POSTER_WEBP"
 else
   "$FFMPEG" -y -loglevel error -ss 0.5 -i "$TMP_MASTER" -frames:v 1 -quality 80 "$POSTER_WEBP" \
-    || echo "  WARN: no cwebp and ffmpeg's webp encoder is unavailable — ${NAME}-poster.webp NOT written"
+    || echo "  WARN: no cwebp and ffmpeg's webp encoder is unavailable, ${NAME}-poster.webp NOT written"
 fi
 
 echo "[6/6] done"
@@ -161,7 +161,7 @@ DESKTOP_BYTES=$(sz "$DESKTOP_MP4")
 MOBILE_BYTES=$(sz "$MOBILE_MP4")
 
 echo ""
-echo "  ${NAME} — ${SECONDS_ARG}s @ ${WIDTH}w, loop seam sealed (${XF}s crossfade)"
+echo "  ${NAME}, ${SECONDS_ARG}s @ ${WIDTH}w, loop seam sealed (${XF}s crossfade)"
 printf "  %-28s %10s\n" "${NAME}.mp4" "$(human "$DESKTOP_BYTES")"
 printf "  %-28s %10s\n" "${NAME}.webm" "$(human "$(sz "$DESKTOP_WEBM")")"
 printf "  %-28s %10s\n" "${NAME}-mobile.mp4" "$(human "$MOBILE_BYTES")"

@@ -40,7 +40,7 @@ const hero = engine.bgVideo({
 ```
 
 `engine.page({ body: `<section class="hero">${hero}</section>` ... })` picks up the
-upgrade script automatically — `page()` scans the body for `class="bg-video` and only
+upgrade script automatically, `page()` scans the body for `class="bg-video` and only
 then appends `bgVideoScript()`. A page that never uses the block ships the exact bytes
 it always did.
 
@@ -72,7 +72,7 @@ tools/make-loop.sh lavfi:'gradients=size=1920x1080:duration=10:speed=0.015:nb_co
 
 `bbe-gate` runs a `bg-video` check whenever `bbe.config.json` names a `buildDir` (the
 same key the kit and head checks already read). Unlike those two, this check only ever
-looks at BUILT pages — there is no source fallback — and a site that never uses the
+looks at BUILT pages, there is no source fallback, and a site that never uses the
 block, or has not built yet, is simply skipped, never blind-failed. It fails a built page
 that stacks more than one `.bg-video`, drops `muted`, `playsinline` or `poster=` from the
 `<video>`, or has no `bg-video__scrim` on the page.
@@ -80,5 +80,5 @@ that stacks more than one `.bg-video`, drops `muted`, `playsinline` or `poster=`
 ## Pack vocabulary
 
 A brand pack's `expression.motion.moves` array can now include `"bgVideo"` to mark that
-the brand has adopted the block. It's descriptive, not enforced by the engine — the gate
+the brand has adopted the block. It's descriptive, not enforced by the engine, the gate
 above is what actually holds the line.

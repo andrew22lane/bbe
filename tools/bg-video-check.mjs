@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * bg-video-check.mjs — proves Andrew's 2026-09-16 ruling: ONE ambient
+ * bg-video-check.mjs, proves Andrew's 2026-09-16 ruling: ONE ambient
  * background video per page, hero only, muted, playing behind a poster and a
  * scrim, never bare.
  *
@@ -8,11 +8,11 @@
  * about a repo that has not built yet, and nothing to say about a repo that
  * never uses the block at all. An engine site's `.bg-video` markup, same as
  * its `<head>`, only exists after `build.mjs` runs, so this check reads
- * `bbe.config.json`'s `buildDir` and ONLY `buildDir` — there is no "read the
+ * `bbe.config.json`'s `buildDir` and ONLY `buildDir`, there is no "read the
  * source instead" fallback the way head-check and kit-drift have, because a
  * hand-written source template quoting `bg-video` classes inside a JS string
  * is not itself a page. When `buildDir` is unset, or set but not built yet,
- * this check is SKIPPED and passes, printing why — the opposite posture from
+ * this check is SKIPPED and passes, printing why, the opposite posture from
  * head/kit's "zero pages read is a blind gate, fail it": a site that has no
  * background-video block at all is a perfectly normal site, not a partial
  * rollout of a rule it opted into.
@@ -24,19 +24,19 @@
  *
  * (a) AT MOST ONE per page. More than one `class="bg-video` (or a class list
  *     that contains it, e.g. `class="bg-video hero"`) on the same page is a
- *     hit — the whole point of "hero only" is there is exactly one ambient
+ *     hit, the whole point of "hero only" is there is exactly one ambient
  *     loop competing for attention, never a page stacking loops in section
  *     after section.
  *
  * (b) EVERY `<video>` INSIDE `.bg-video` CARRIES `muted`, `playsinline`, AND
- *     a `poster=` attribute. Missing any one of the three is a hit — a video
+ *     a `poster=` attribute. Missing any one of the three is a hit, a video
  *     without `muted` cannot autoplay in any browser that matters, one
  *     without `playsinline` fullscreens itself on iOS the instant it plays,
  *     and one without a poster shows nothing (or a black frame) until the
  *     script upgrades it, on a slow connection or with JS off.
  *
  * (c) EVERY `.bg-video` HAS A SCRIM. No `bg-video__scrim` element inside a
- *     `.bg-video` section is a hit — the recipe is text over the clip, never
+ *     `.bg-video` section is a hit, the recipe is text over the clip, never
  *     the clip alone, and the scrim is what keeps it low-contrast enough to
  *     read over.
  *
@@ -72,7 +72,7 @@ function findBgVideoSections(text) {
 // site built from engine/bg-video.mjs's own bgVideo() nests exactly one
 // `<video class="bg-video__video">` per `.bg-video` section, so this reads
 // every `<video ...>` tag in the file and every `.bg-video__scrim` occurrence,
-// and reports counts against the page as a whole — precise enough to catch a
+// and reports counts against the page as a whole, precise enough to catch a
 // hand-rolled page that dropped an attribute or the scrim, without pretending
 // to resolve nesting text scanners cannot see.
 function findVideoTags(text) {
@@ -110,11 +110,11 @@ export function scanBgVideo(repoRoot, opts = {}) {
   const buildDir = normalizeBuildDir(opts.buildDir);
   const absBuilt = resolve(absRepo, buildDir);
   // A named buildDir that has never been built is not this check's business to
-  // fail — bbe-gate's own "buildDir does not exist" die() covers that for a repo
+  // fail, bbe-gate's own "buildDir does not exist" die() covers that for a repo
   // with a "kit" object; a repo with none isn't blocked from building at all, so
   // this just skips rather than blind-failing on the missing directory.
   if (!existsSync(absBuilt)) {
-    return { hits: [], filesChecked: 0, skipped: true, skipReason: `buildDir ${buildDir}/ does not exist yet — build first` };
+    return { hits: [], filesChecked: 0, skipped: true, skipReason: `buildDir ${buildDir}/ does not exist yet, build first` };
   }
   const pages = builtFiles(absRepo, buildDir, [...DEFAULT_EXCLUDE, ...(opts.exclude || [])]);
   const hits = [];

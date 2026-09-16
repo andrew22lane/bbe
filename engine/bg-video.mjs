@@ -1,5 +1,5 @@
 // =====================================================================
-// engine/bg-video.mjs — the ambient background video block.
+// engine/bg-video.mjs, the ambient background video block.
 //
 // Andrew ruled 2026-09-16: ONE ambient background video per page, hero only,
 // slow, low-contrast, behind a scrim, no faces or text in the clip, poster
@@ -89,7 +89,7 @@ if(document.readyState==='complete')boot();else window.addEventListener('load',b
 //  scrim, content, tag='section', className='', attrs=''}
 //
 // mp4/webm/poster are absolute or site-relative URLs the consumer already
-// resolved (this module holds no BASE, no SITE — brand-blind). `content` is
+// resolved (this module holds no BASE, no SITE, brand-blind). `content` is
 // raw HTML, already escaped by the caller if it needed to be.
 export function bgVideo({
   mp4,
