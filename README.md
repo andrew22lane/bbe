@@ -191,7 +191,7 @@ The gate's CI steps live in `.github/workflows/bbe-gate.yml` in this repo, behin
 ```yaml
 jobs:
   brand-gate:
-    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.5.0
+    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.6.0
 ```
 
 It checks out, sets up Node, installs (`npm ci` with a lockfile, `npm install`
