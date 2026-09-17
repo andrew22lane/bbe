@@ -29,9 +29,10 @@
  * TWO CHECKS.
  *
  * (a) LINKS THE KIT FIRST. Any HTML file, any HTML-emitting template (a .mjs/.js
- *     file whose text contains BOTH `<head` and `</head>` — it assembles a whole
- *     page, not just a CSS-loading helper that happens to contain one `<link>`
- *     for something else, e.g. pages.mjs's leafletHead()), is read for its
+ *     file that assembles a whole page: it carries BOTH `<head` and `</head>`, or
+ *     it opens with a `<!doctype html>` and lets the browser insert the head. Not
+ *     a CSS-loading helper holding one `<link>` for something else, e.g. pages.mjs's
+ *     leafletHead()), is read for its
  *     stylesheet references in document order: `<link rel="stylesheet"
  *     href="...">` and `@import url("...")`. The kit (`url` or `local`) must be
  *     the FIRST one. A page with zero stylesheet references and no embedded kit
@@ -144,14 +145,25 @@ export function resolveTemplateVar(text, varName) {
 }
 
 // Is this file one of the pages the ONE-SYSTEM-LAW checks apply to? A .html
-// file always is. A .mjs/.js/.cjs file is one only when it actually assembles
-// a whole page (carries BOTH `<head` and `</head>`), never merely because it
-// contains a stray `<link>` fragment — see pages.mjs's leafletHead() in the
+// file always is. A .mjs/.js/.cjs file is one when it actually assembles a whole
+// page (an explicit head element, or a doctype with the head left implicit),
+// never merely because it contains a stray `<link>` fragment — see pages.mjs's
+// leafletHead() in the
 // v1.3.1 changelog entry above. Shared by scanKit's link-first check and by
 // head-check.mjs's favicon / og:image check, so the two scanners cannot
 // disagree about what counts as a page.
 export function isPageFile(ext, text) {
-  return ext === '.html' || (TEMPLATE_EXT.includes(ext) && /<head[\s>]/i.test(text) && /<\/head>/i.test(text));
+  if (ext === '.html') return true;
+  if (!TEMPLATE_EXT.includes(ext)) return false;
+  // A whole page, two ways it gets written. An explicit head element is the common
+  // one. A doctype with no head element is the other: `<head>` is optional in HTML
+  // and the browser inserts it, so a worker can emit
+  // `<!doctype html><meta charset="utf-8"><link rel="stylesheet" ...>` and serve a
+  // complete document. proveit-domain's worker.js does exactly that, and the old
+  // head-element-only rule read it as "not a page", so the kit link check scanned 5
+  // files, 0 pages, and passed having proven nothing. Measured 2026-09-16.
+  if (/<!doctype\s+html/i.test(text)) return true;
+  return /<head[\s>]/i.test(text) && /<\/head>/i.test(text);
 }
 
 // Does this href point at the kit? Three ways, in order: the accepted ref

@@ -22,6 +22,11 @@
 //  10. the kit linked, but NOT first -> still a hit
 //  11. no kit reference at all -> still a hit
 //
+// Cases 15-17, added 2026-09-16 after proveit-domain's worker read as "not a page":
+//  15. a doctype document with NO head element -> counted as a page
+//  16. the same, missing the kit -> still a hit
+//  17. a link-only fragment with no doctype -> still not a page
+//
 // Same shape as brand-drift.mjs's own selftest: build a throwaway fixture repo,
 // call the scanner directly, assert on its return value. No CLI, no gate — that
 // end-to-end path is what test/smoke.mjs covers.
@@ -263,6 +268,53 @@ console.log('\n  kit-drift.mjs — kit-check\n');
 </head><body></body></html>`);
   const r = scanKit(fx.dir, { url: KIT_URL }, { buildDir: 'dist' });
   probe('case 14: reserved selector in built CSS -> not flagged (reserved half stays on source)', r.hits.length === 0 && r.builtPagesChecked === 1);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 15
+// A worker that emits a whole document with NO head element: `<head>` is optional
+// in HTML and the browser inserts it. proveit-domain/worker.js is the real shape.
+// The old head-element-only rule read it as "not a page", so the link-first check
+// scanned the repo and proved nothing. Measured 2026-09-16: 5 files, 0 pages.
+{
+  const fx = fixture();
+  fx.write('worker.js', `export default { fetch() {
+return new Response(\`<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="${KIT_URL}">
+<h1>hello</h1>\`, {headers:{'content-type':'text/html'}});
+} };
+`);
+  const r = scanKit(fx.dir, { url: KIT_URL }, {});
+  probe('case 15: doctype page with no <head> element -> counted as a page', r.pagesChecked === 1);
+  probe('case 15: and it links the kit first -> zero hits', r.hits.length === 0);
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 16
+{
+  const fx = fixture();
+  fx.write('worker.js', `export default { fetch() {
+return new Response(\`<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="/other.css">
+<h1>hello</h1>\`, {headers:{'content-type':'text/html'}});
+} };
+`);
+  const r = scanKit(fx.dir, { url: KIT_URL }, {});
+  probe('case 16: doctype page that misses the kit -> a hit', r.hits.length === 1 && /does not link the kit/.test(r.hits[0].reason));
+  rmSync(fx.dir, { recursive: true, force: true });
+}
+
+// ------------------------------------------------------------------ case 17
+// The fragment guard still holds: a helper with a stylesheet link but no doctype
+// and no head element is NOT a page (pages.mjs's leafletHead(), the v1.3.1 case).
+{
+  const fx = fixture();
+  fx.write('helper.mjs', `export function leafletHead(){
+  return '<link rel="stylesheet" href="https://unpkg.test/leaflet.css">';
+}
+`);
+  const r = scanKit(fx.dir, { url: KIT_URL }, {});
+  probe('case 17: a link-only fragment is still not a page', r.pagesChecked === 0 && r.hits.length === 0);
   rmSync(fx.dir, { recursive: true, force: true });
 }
 

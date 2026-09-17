@@ -3,6 +3,29 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
+## v1.6.3 — a page without a `<head>` element is still a page
+
+`<head>` is optional in HTML: a document that opens with `<!doctype html>` and goes
+straight to `<meta>` and `<link>` is complete, and the browser inserts the head itself.
+The page test required a literal `<head` AND `</head>`, so a worker written that way was
+read as "not a page" and skipped by both the kit link check and the head check.
+
+Measured on proveit-domain 2026-09-16, whose `worker.js` renders exactly that shape: the
+kit check scanned 5 files, **0 pages**, and passed having proven nothing. Same class of
+defect as the v1.5.0 one, a different cause: there, the pages existed only after a build;
+here, the pages were in source and did not look like pages.
+
+- **`isPageFile` now counts a `.mjs`/`.js`/`.cjs` file as a page when it carries a
+  `<!doctype html>`**, as well as when it carries an explicit head element. Both scanners
+  import that one function, so they cannot disagree.
+- **The fragment guard is unchanged.** A helper that returns a lone `<link>` with no
+  doctype and no head element (pages.mjs's `leafletHead()`, the v1.3.1 case) is still not
+  a page. Covered by a test so it stays that way.
+- After this, proveit-domain reads 1 page, 0 hits, and passes with no config change. It
+  needed no `buildDir`: a worker has no build output, so v1.5.0 alone could not have
+  fixed it.
+- Tests: `test/kit-check.mjs` cases 15-17.
+
 ## v1.6.2: the loop seam is sealed in the right order
 
 `make-loop.sh` put the crossfaded seam LAST and the `<video loop>` then jumped back
