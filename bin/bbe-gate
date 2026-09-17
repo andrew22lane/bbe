@@ -420,6 +420,7 @@ if (kitBlind) {
   console.log(buildDir
     ? `Nothing in ${buildDir}/ or the source is a page. Did the build write where "buildDir" says?`
     : `A site whose pages come from a build script has none in its source. Add "buildDir": "dist" to ${CONFIG_NAME}, and build before the gate.`);
+  console.log('Check "buildDir" against what your deploy actually serves. A repo can hold more than one build, and a scan pointed at the wrong output measures nothing.');
 }
 
 if (headBlind) {
@@ -428,6 +429,7 @@ if (headBlind) {
   console.log(buildDir
     ? `Nothing in ${buildDir}/ or the source is a page. Did the build write where "buildDir" says?`
     : `A site whose pages come from a build script has none in its source. Add "buildDir": "dist" to ${CONFIG_NAME}, and build before the gate.`);
+  console.log('Check "buildDir" against what your deploy actually serves. A repo can hold more than one build, and a scan pointed at the wrong output measures nothing.');
 }
 
 if (exitCode !== 0) process.exit(exitCode);
