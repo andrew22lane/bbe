@@ -380,17 +380,16 @@ gate and a rendered page in a real browser.
 
 Every consumer pins a tag, twice: the `@andrew22lane/bbe` devDependency in
 `package.json` and the `uses: ...bbe-gate.yml@vX` line in its workflow. The workflow
-pin decides which gate runs in CI. Measured from each repo's default branch on
-2026-09-19:
+pin decides which gate runs in CI. Measured on each repo's `main`, 2026-09-19:
 
 | Pinned at | Repos |
 |---|---|
-| `v1.6.3` | `bex-members`, `proveit-domain` |
-| `v1.6.2` | `bexco-partner-library`, `dh-club`, `embody-app`, `hh-content-calendar`, `hh-content-library`, `vhc-site` |
-| `v1.4.0` (workflow) / `v1.3.1` (package) | `bex-links`, `franchise-watchlist-site` |
-| `v1.3.1` | `bex-site`, `design-hacker-apex`, `dh-capture`, `gab-site`, `photographerceo-site` |
-| `v1.2.0` | `bbe-ask`, `bex-forms`, `dh-library` |
+| `v1.7.0` | `bbe-ask`, `bex-forms`, `bex-links`, `bex-members`, `bex-site`, `bexco-partner-library`, `dh-capture`, `dh-club`, `dh-library`, `embody-app`, `franchise-watchlist-site`, `gab-site`, `hh-content-calendar`, `hh-content-library`, `photographerceo-site`, `proveit-domain`, `vhc-site` |
+| `v1.7.0` on `staging`, promote pending | `design-hacker-apex` |
 | config only, no pin | `bexco-asset-library` |
+
+`buildDir` set (CI builds, then gates the built pages): `bex-site`, `gab-site`,
+`vhc-site`. Moving the whole estate onto a new tag: `scripts/estate-bump/README.md`.
 
 Nobody is bumped by a release here. A consumer moves when somebody changes its one
 pinned line and proves the output, and never as a side effect of a tag being pushed.
