@@ -32,8 +32,6 @@ it into the shared gate, so every brand gets it by bumping one pin.
 - **Known gap:** six repos read 0 pages because their pages come from a build or a
   worker and they name no `buildDir` (gab-site, embody-app, proveit-domain, dh-capture,
   bbe-ask, bex-forms). They pass this check without it proving anything until they do.
-- Also in this release (merged after v1.6.3, untagged until now): when a check reads zero
-  pages, the gate says to check `buildDir` against what the deploy actually serves.
 - Tests: `test/script-parse.mjs`, case 1 is the exact VHC line.
 
 **Who gets it:** nobody, until they bump. Every consumer pins a tag. See the Consumers
