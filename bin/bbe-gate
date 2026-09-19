@@ -8,9 +8,10 @@
 //   npx bbe-gate --json             machine-readable result on stdout
 //   npx bbe-gate --selftest         plant a defect in a fixture, assert the scanner goes RED
 //
-// Exit 0 clean or improved. Exit 1 the BRAND count rose above the baseline.
+// Exit 0 clean or improved. Exit 1 a check failed: the BRAND count rose above the
+// baseline, or a KIT, HEAD, BGVIDEO or SCRIPT hit.
 // Exit 2 the gate could not run (no config, no pack mirror, bad input, a named
-// buildDir that was never built, or a kit/head check that read zero pages).
+// buildDir that was never built, or a kit/head/script check that read zero pages).
 //
 // WHY THIS EXISTS. Before the package, every repo carried its own byte-copy of
 // brand-drift.mjs plus its own brand-gate-check.mjs plus a gate-parity.mjs whose
@@ -54,6 +55,7 @@ import { scanRepo, DEFAULT_EXCLUDE } from '../tools/brand-drift.mjs';
 import { scanKit, normalizeBuildDir } from '../tools/kit-drift.mjs';
 import { scanHead } from '../tools/head-check.mjs';
 import { scanBgVideo } from '../tools/bg-video-check.mjs';
+import { scanScripts } from '../tools/script-parse.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DRIFT = path.join(HERE, '..', 'tools', 'brand-drift.mjs');
@@ -253,7 +255,19 @@ const headBlind = !!(headResult && (headResult.faviconChecked || headResult.ogIm
 const bgVideoResult = buildDir ? scanBgVideo(repoRoot, { exclude: config.exclude || [], buildDir }) : { hits: [], filesChecked: 0, skipped: true, skipReason: 'no buildDir' };
 const bgVideoFailed = bgVideoResult.hits.length > 0;
 
-const exitCode = (rose || kitFailed || headFailed || bgVideoFailed) ? 1 : ((headBlind || kitBlind) ? 2 : 0);
+// ---------------------------------------------------------------- the script-parse scan
+// 2026-09-18, VHC: a copy edit put "We'll" inside a single-quoted JS string, the form
+// script died with a SyntaxError, and every gate passed because none of them read
+// JavaScript as JavaScript (relay incident 11239). Every inline <script> on every
+// .html page, source and buildDir, must parse; JSON-LD must JSON.parse. Always on:
+// no config key, because there is no site that wants a script that does not run.
+// A repo with no pages at all passes (a worker is not a site). A named buildDir that
+// is missing or holds no pages is BLIND: the pages that ship were never read.
+const scriptResult = scanScripts(repoRoot, { exclude: config.exclude || [], buildDir });
+const scriptFailed = scriptResult.hits.length > 0;
+const scriptBlind = !!(buildDir && scriptResult.builtPagesChecked === 0);
+
+const exitCode = (rose || kitFailed || headFailed || bgVideoFailed || scriptFailed) ? 1 : ((headBlind || kitBlind || scriptBlind) ? 2 : 0);
 
 if (JSON_OUT) {
   console.log(JSON.stringify({
@@ -299,6 +313,18 @@ if (JSON_OUT) {
       filesChecked: bgVideoResult.filesChecked,
       hits: bgVideoResult.hits.length,
       violations: bgVideoResult.hits
+    },
+    scripts: {
+      checked: true,
+      pagesChecked: scriptResult.pagesChecked,
+      builtPagesChecked: scriptResult.builtPagesChecked,
+      scriptsParsed: scriptResult.scriptsParsed,
+      jsonParsed: scriptResult.jsonParsed,
+      placeholderScripts: scriptResult.placeholderScripts,
+      skippedByType: scriptResult.skipped,
+      blind: scriptBlind,
+      hits: scriptResult.hits.length,
+      violations: scriptResult.hits
     }
   }, null, 2));
   process.exit(exitCode);
@@ -366,6 +392,18 @@ if (!bgVideoResult.skipped) {
   say(`  bg-video     skipped (${bgVideoResult.skipReason})`);
 }
 
+// ---------------------------------------------------------------- the script-parse report
+say('');
+{
+  const builtScripts = buildDir ? `, ${scriptResult.builtPagesChecked} of them in ${buildDir}/` : '';
+  const skippedTypes = Object.entries(scriptResult.skipped).map(([t, n]) => `${n} ${t}`).join(', ');
+  say(`  scripts      every inline <script> parses, JSON-LD is valid JSON  (${scriptResult.pagesChecked} pages${builtScripts}; ${scriptResult.scriptsParsed} scripts + ${scriptResult.jsonParsed} JSON blocks parsed${skippedTypes ? `; not code, skipped: ${skippedTypes}` : ''})`);
+  if (scriptResult.placeholderScripts) say(`               ${scriptResult.placeholderScripts} source template script(s) parsed with their {{placeholders}} read as null`);
+  for (const h of scriptResult.hits) say(`  SCRIPT: ${h.file}:${h.line} ${h.reason}`);
+  say(`  SCRIPT hits: ${scriptResult.hits.length}`);
+  if (scriptBlind) say(`  SCRIPT BLIND: ${buildDir}/ ${scriptResult.buildDirExists ? 'holds no .html pages' : 'does not exist'}, so the pages that ship were never parsed.`);
+}
+
 // ---------------------------------------------------------------- --write-baseline
 if (has('--write-baseline')) {
   if (configSource !== configPath) {
@@ -408,6 +446,11 @@ if (bgVideoFailed) {
   console.log(`FAIL: ${bgVideoResult.hits.length} BGVIDEO hit(s). One ambient background video per page, hero only, muted+playsinline+poster, behind a scrim.`);
 }
 
+if (scriptFailed) {
+  console.log('');
+  console.log(`FAIL: ${scriptResult.hits.length} SCRIPT hit(s). An inline script that does not parse never runs: forms, menus and tracking on that page are dead. A quote mark inside a quoted string is the usual cause (VHC, 2026-09-18).`);
+}
+
 if (rose) {
   console.log('');
   console.log(`FAIL: BRAND count rose from ${config.baseline} to ${scan.brand.length}.`);
@@ -430,6 +473,11 @@ if (headBlind) {
     ? `Nothing in ${buildDir}/ or the source is a page. Did the build write where "buildDir" says?`
     : `A site whose pages come from a build script has none in its source. Add "buildDir": "dist" to ${CONFIG_NAME}, and build before the gate.`);
   console.log('Check "buildDir" against what your deploy actually serves. A repo can hold more than one build, and a scan pointed at the wrong output measures nothing.');
+}
+
+if (scriptBlind) {
+  console.log('');
+  console.log(`FAIL: the script check read ZERO built pages. ${buildDir}/ ${scriptResult.buildDirExists ? 'holds no .html pages' : 'does not exist'}. Build before the gate, and check "buildDir" against what your deploy actually serves.`);
 }
 
 if (exitCode !== 0) process.exit(exitCode);
