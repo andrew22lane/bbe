@@ -191,7 +191,7 @@ The gate's CI steps live in `.github/workflows/bbe-gate.yml` in this repo, behin
 ```yaml
 jobs:
   brand-gate:
-    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.6.3
+    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.7.0
 ```
 
 It checks out, sets up Node, installs (`npm ci` with a lockfile, `npm install`
@@ -322,6 +322,35 @@ consumer on `main` on 2026-09-15: one repo is affected by the kit half (`proveit
 an engine site with no source page). Every other kit repo already has source pages the
 check reads. Adding `buildDir` clears both.
 
+## Script check
+
+On 2026-09-18 the VHC site was one click from its domain flip with every lead form
+dead. A copy edit put an apostrophe ("We'll") inside a single-quoted JavaScript string
+on the homepage and /start/, the form script threw a SyntaxError, and every gate
+passed. None of them read JavaScript as JavaScript. This check is always on, with no
+config key, because no site wants a script that does not run.
+
+- Every `.html` page the gate can see (source, plus `buildDir` when set) has each
+  inline `<script>` without a `src` parsed. Classic scripts compile with
+  `new vm.Script` (nothing runs), `type="module"` goes through `node --check`, and
+  JSON blocks (`application/ld+json`, `application/json`, `importmap`,
+  `speculationrules`) go through `JSON.parse`. Other types (`text/template`,
+  `text/plain`) are not code; they are skipped and counted in the output.
+- A hit names the page and the line the error is on:
+  `SCRIPT: launch/dist/index.html:1438 inline script does not parse: SyntaxError: missing ) after argument list`.
+  One hit fails the build. There is no ratchet.
+- A SOURCE template's `{{NAME}}` placeholders are read as `null` so the rest of the
+  script is still checked. In `buildDir` output nothing is substituted: a placeholder
+  left in a built page is the bug.
+- A named `buildDir` that is missing or holds no `.html` pages is BLIND and exits 2.
+  A repo with no pages at all (a worker) reads 0 pages and passes.
+- Pages rendered inside a worker's `.js` template literal are not read. Their scripts
+  are half `${...}` until they render.
+
+Proven on the real thing, 2026-09-19: VHC built at the broken commit (`b4f3b04^`)
+fails with the two dead pages named at the exact "We'll" line; VHC `main` passes
+(52 pages, 175 scripts + 85 JSON blocks parsed).
+
 ## How to add a consumer
 
 **For a brand-new surface, use `bbe new-surface` above; it does all of this.** What
@@ -349,11 +378,19 @@ gate and a rendered page in a real browser.
 
 ## Consumers
 
-| Repo | Status |
+Every consumer pins a tag, twice: the `@andrew22lane/bbe` devDependency in
+`package.json` and the `uses: ...bbe-gate.yml@vX` line in its workflow. The workflow
+pin decides which gate runs in CI. Measured from each repo's default branch on
+2026-09-19:
+
+| Pinned at | Repos |
 |---|---|
-| `gab-site` | on `v1.0.1`, merged to `main` 2026-09-07. No engine mirror. |
-| `design-hacker-apex` | on `v1.0.1`, merged to `staging` 2026-09-07. No engine mirror. |
-| `bex-site` | pending. Its `engine/lib.mjs` IS the source of `v1.0.1`; it migrates after its `staging` → `main` merge lands. |
+| `v1.6.3` | `bex-members`, `proveit-domain` |
+| `v1.6.2` | `bexco-partner-library`, `dh-club`, `embody-app`, `hh-content-calendar`, `hh-content-library`, `vhc-site` |
+| `v1.4.0` (workflow) / `v1.3.1` (package) | `bex-links`, `franchise-watchlist-site` |
+| `v1.3.1` | `bex-site`, `design-hacker-apex`, `dh-capture`, `gab-site`, `photographerceo-site` |
+| `v1.2.0` | `bbe-ask`, `bex-forms`, `dh-library` |
+| config only, no pin | `bexco-asset-library` |
 
 Nobody is bumped by a release here. A consumer moves when somebody changes its one
 pinned line and proves the output, and never as a side effect of a tag being pushed.

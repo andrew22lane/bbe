@@ -3,6 +3,42 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
+## v1.7.0 — every inline script must parse
+
+On 2026-09-18 the VHC site (andrew22lane/vhc-site) was one click from its domain flip
+with every lead form dead. A copy edit put an apostrophe ("We'll") inside a
+single-quoted JS string on the homepage and /start/. The form script threw a
+SyntaxError on load and every gate passed, because none of them read JavaScript as
+JavaScript (relay incident 11239). VHC's own gate got a parse check that day. This moves
+it into the shared gate, so every brand gets it by bumping one pin.
+
+- **New: the script check, `tools/script-parse.mjs`, always on.** Every inline
+  `<script>` with no `src`, on every `.html` page in the source and in `buildDir`, is
+  parsed: classic scripts with `new vm.Script` (compile only, browser rules, so a
+  top-level `return` fails), `type="module"` with `node --check`, and JSON blocks
+  (`application/ld+json`, `application/json`, `importmap`, `speculationrules`) with
+  `JSON.parse`. A hit prints `SCRIPT: <file>:<line>` with the page line of the error.
+  One hit is exit 1. Output and `--json` report pages read, scripts and JSON blocks
+  parsed, and skipped non-code types, so a check that saw nothing can't pass quietly.
+- **A named `buildDir` with no built pages is BLIND, exit 2**, same as kit and head.
+- **Source templates:** `{{NAME}}` placeholders in a source page are read as `null`,
+  so bex-site's `portal-builder/template-v2.html` and `template-v4.html`
+  (`const SNAPSHOT = {{SNAPSHOT_JSON}};`) still get the rest of their script checked.
+  Built pages are never substituted.
+- **Measured before release, 19 consumer repos at their default branch:** zero hits
+  on source pages (the only two before the template rule were those bex-site
+  templates). VHC was also BUILT: at the broken commit it fails with both pages named at
+  the "We'll" line; at `main` it passes, 52 pages, 175 scripts + 85 JSON blocks.
+- **Known gap:** six repos read 0 pages because their pages come from a build or a
+  worker and they name no `buildDir` (gab-site, embody-app, proveit-domain, dh-capture,
+  bbe-ask, bex-forms). They pass this check without it proving anything until they do.
+- Also in this release (merged after v1.6.3, untagged until now): when a check reads zero
+  pages, the gate says to check `buildDir` against what the deploy actually serves.
+- Tests: `test/script-parse.mjs`, case 1 is the exact VHC line.
+
+**Who gets it:** nobody, until they bump. Every consumer pins a tag. See the Consumers
+table in the README for where each one sits.
+
 ## v1.6.3 — a page without a `<head>` element is still a page
 
 `<head>` is optional in HTML: a document that opens with `<!doctype html>` and goes
