@@ -130,8 +130,54 @@ function lane(kind) {
     && new RegExp(`uses: andrew22lane/bbe/\\.github/workflows/bbe-gate\\.yml@v${PKG_VERSION.replace(/\./g, '\\.')}`).test(fs.readFileSync(wf, 'utf8')));
 
   gateConfigChecks(dir);
+  if (kind === 'site') builtOutputChecks(dir);
 
   return dir;
+}
+
+// ---------------------------------------------------------------- built output (buildDir)
+// The 2026-09-15 blind spot: an engine site's pages only exist in dist/, so the head
+// check on a fresh scaffold read "(0 files checked)" and passed. The scaffold now writes
+// "buildDir": "dist", and these prove the gate actually reads the built page.
+function builtOutputChecks(dir) {
+  const cfg = JSON.parse(fs.readFileSync(path.join(dir, 'bbe.config.json'), 'utf8'));
+  check('site: bbe.config.json names buildDir "dist"', cfg.buildDir === 'dist');
+
+  const gate = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  const head = /head check .*\((\d+) files checked, (\d+) of them in dist\/\)/.exec(gate.out);
+  check('site: the head check reads the built page, not zero files', gate.status === 0 && !!head && Number(head[2]) >= 1,
+    head ? `${head[1]} files, ${head[2]} built` : 'no head check line');
+  const kit = /kit check .*\(\d+ files checked, (\d+) pages, (\d+) of them in dist\/\)/.exec(gate.out);
+  check('site: the kit link check reads the built page', !!kit && Number(kit[2]) >= 1, kit ? `${kit[2]} built pages` : 'no kit check line');
+  check('site: no KIT BLIND once buildDir is set', !/KIT BLIND/.test(gate.out));
+
+  // Break the built page's favicon: the gate must now see it, by its dist/ path.
+  const html = path.join(dir, 'dist', 'index.html');
+  const good = fs.readFileSync(html, 'utf8');
+  fs.writeFileSync(html, good.replace(/<link rel="icon"[^>]*cdn\.brandbuilderengine\.com[^>]*>/, ''));
+  const broken = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('site: a built page missing the kit favicon fails the gate', broken.status === 1 && /HEAD: dist\/index\.html:\d+ missing rel=icon|HEAD: dist\/index\.html:\d+ favicon .* != kit\.favicon/.test(broken.out));
+  fs.writeFileSync(html, good);
+
+  // No build yet: stop with "build first", never a blind pass.
+  fs.renameSync(path.join(dir, 'dist'), path.join(dir, 'dist-held'));
+  const unbuilt = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('site: buildDir missing -> exit 2, says build first', unbuilt.status === 2 && /does not exist/.test(unbuilt.out) && /npm run build/.test(unbuilt.out));
+  fs.renameSync(path.join(dir, 'dist-held'), path.join(dir, 'dist'));
+
+  // The same site with buildDir removed is the old blind config: the head check must fail loud.
+  const cfgPath = path.join(dir, 'bbe.config.json');
+  const original = fs.readFileSync(cfgPath, 'utf8');
+  const { buildDir, ...noBuildDir } = cfg;
+  fs.writeFileSync(cfgPath, JSON.stringify(noBuildDir, null, 2) + '\n');
+  const blind = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('site: no buildDir -> head check read ZERO pages -> exit 2, never PASS', blind.status === 2 && /read ZERO pages/.test(blind.out) && !/^PASS$/m.test(blind.out));
+  check('site: no buildDir -> the kit check fails on zero pages', /KIT BLIND: the link-first half read 0 pages/.test(blind.out) && /FAIL: the kit check read ZERO pages/.test(blind.out));
+  const blindJson = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate'), '--json'], dir, { allowFail: true });
+  let parsed = null;
+  try { parsed = JSON.parse(blindJson.out); } catch {}
+  check('site: --json reports the blind head check as not ok', blindJson.status === 2 && !!parsed && parsed.ok === false && parsed.head.blind === true && parsed.kit.blind === true);
+  fs.writeFileSync(cfgPath, original);
 }
 
 const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
@@ -198,6 +244,151 @@ function gateConfigChecks(dir) {
   fs.writeFileSync(cfgPath, original);
 }
 
+// ---------------------------------------------------------------- the kit check, end to end
+// kit-check.mjs unit-tests tools/kit-drift.mjs directly (five cases). This proves bin/bbe-gate
+// WIRES it in correctly: the "local" field name (every 2026-09-13 kit mint wrote "local", not
+// "kitLocal" — a name that never matched would have silently never exempted a single kit file
+// and never recognised a single local link), the automatic hex-ratchet exemption for kit.local,
+// and the one-line skip warning when a brand has no kit yet. Runs against its OWN tiny fixture
+// repo, never the scaffolded site/worker lanes, so an unrelated template file elsewhere in the
+// scaffold can never make this pass or fail for the wrong reason.
+function kitEndToEndCheck() {
+  log('');
+  log('--- kit check (bin/bbe-gate, end to end) ---');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbe-smoke-kit-'));
+  const pack = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'fixture.brandpack.json'), 'utf8'));
+  const brandHex = pack.outputs.web.palette.mark.value; // "#2F6F62"
+
+  fs.mkdirSync(path.join(dir, 'brand'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'brand', 'fixture.brandpack.json'), JSON.stringify(pack, null, 2));
+
+  const baseCfg = { pack: 'fixture', exclude: [], baseline: 0 };
+  const cfgPath = path.join(dir, 'bbe.config.json');
+  fs.writeFileSync(cfgPath, JSON.stringify(baseCfg, null, 2) + '\n');
+
+  // skip: no "kit" key at all. Still passes, one-line warning, never a FAIL.
+  const noKit = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  check('no "kit" in bbe.config.json: gate still passes', noKit.status === 0);
+  check('no "kit" in bbe.config.json: prints a one-line skip warning',
+    /kit check\s+skipped — no "kit" in bbe\.config\.json/.test(noKit.out));
+
+  // Wire a real kit: kit.local carries the brand's own hex (as a real kit must), and one
+  // page links it FIRST with nothing else declaring a reserved token.
+  fs.mkdirSync(path.join(dir, 'kit'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'kit', 'fixture-kit-v1.css'), `:root{--primary:${brandHex};}\n.btn{padding:.5rem}\n`);
+  const pagePath = path.join(dir, 'index.html');
+  fs.writeFileSync(pagePath, `<!doctype html><html><head>\n<link rel="stylesheet" href="/kit/fixture-kit-v1.css">\n</head><body></body></html>\n`);
+  const withKit = { ...baseCfg, kit: { url: 'https://cdn.example.test/fixture-kit-v1.css', local: 'kit/fixture-kit-v1.css' } };
+  fs.writeFileSync(cfgPath, JSON.stringify(withKit, null, 2) + '\n');
+
+  const pass = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  check('pass: kit.local is exempt from the hex ratchet with no "exclude" entry needed',
+    pass.status === 0 && /BRAND hits: 0/.test(pass.out));
+  check('pass: kit linked first, only the kit declares tokens -> zero KIT hits',
+    /KIT hits: 0/.test(pass.out));
+  check('pass: reports the exempted kit file by its "local" path',
+    pass.out.includes('kit/fixture-kit-v1.css'));
+
+  // fail: the page never links the kit. No ratchet on a KIT hit — one hit fails outright,
+  // even though the hex baseline is untouched at 0.
+  fs.writeFileSync(pagePath, `<!doctype html><html><head>\n<link rel="stylesheet" href="/other.css">\n</head><body></body></html>\n`);
+  const missingLink = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('fail: a page that never links the kit fails the build',
+    missingLink.status === 1 && /KIT hits: [1-9]/.test(missingLink.out));
+  check('fail: BRAND is still 0 — this is a KIT failure, not a ratchet failure',
+    /BRAND hits: 0/.test(missingLink.out));
+
+  // fail: the link is restored, but a surface file declares its own .btn outside the kit.
+  fs.writeFileSync(pagePath, `<!doctype html><html><head>\n<link rel="stylesheet" href="/kit/fixture-kit-v1.css">\n</head><body></body></html>\n`);
+  fs.writeFileSync(path.join(dir, 'surface.css'), `.btn{background:#fff}\n`);
+  const localBtn = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('fail: a local .btn outside the kit fails the build',
+    localBtn.status === 1 && /KIT hits: [1-9]/.test(localBtn.out) && /\.btn declared outside the kit/.test(localBtn.out));
+
+  if (!KEEP) fs.rmSync(dir, { recursive: true, force: true });
+  else log(`\nkept: ${dir}`);
+}
+
+// ---------------------------------------------------------------- the head check, end to end
+// head-check.mjs's own test/head-check.mjs unit-tests scanHead directly (cases a-g).
+// This proves bin/bbe-gate WIRES it in correctly: reads kit.favicon/kit.ogImage out of
+// bbe.config.json, prints the "head check ..." / "HEAD: ..." lines, and fails the build
+// on a real HEAD hit — exactly the same split test/kit-check.mjs and kitEndToEndCheck()
+// above already use for the kit check. Runs against its own tiny fixture repo, never the
+// scaffolded site/worker lanes, so nothing there can make this pass or fail for the wrong
+// reason.
+function headEndToEndCheck() {
+  log('');
+  log('--- head check (bin/bbe-gate, end to end) ---');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bbe-smoke-head-'));
+  const pack = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'fixture.brandpack.json'), 'utf8'));
+  const FAVICON = pack.outputs.web.kit.favicon;
+  const OG_IMAGE = pack.outputs.web.kit.ogImage;
+
+  fs.mkdirSync(path.join(dir, 'brand'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'brand', 'fixture.brandpack.json'), JSON.stringify(pack, null, 2));
+
+  const baseCfg = { pack: 'fixture', exclude: [], baseline: 0 };
+  const cfgPath = path.join(dir, 'bbe.config.json');
+  fs.writeFileSync(cfgPath, JSON.stringify(baseCfg, null, 2) + '\n');
+
+  // The kit stylesheet link is a separate, unrelated check (kit-drift.mjs). Carry it
+  // on every fixture page here so a head-check assertion never fails for a KIT reason.
+  const KIT_URL = 'https://cdn.example.test/fixture-kit-v1.css';
+  const pagePath = path.join(dir, 'index.html');
+  const compliantPage = `<!doctype html><html><head>
+<link rel="stylesheet" href="${KIT_URL}">
+<link rel="icon" type="image/svg+xml" href="${FAVICON}">
+<meta property="og:image" content="${OG_IMAGE}">
+<meta name="twitter:card" content="summary_large_image">
+</head><body></body></html>
+`;
+  fs.writeFileSync(pagePath, compliantPage);
+
+  // skip: kit set, but no favicon/ogImage keys on it at all. Still passes, one-line
+  // warning, never a FAIL — no config change from before this rule existed.
+  const withKitNoHead = { ...baseCfg, kit: { url: KIT_URL } };
+  fs.writeFileSync(cfgPath, JSON.stringify(withKitNoHead, null, 2) + '\n');
+  const noHead = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  check('fixture (a): no kit.favicon/kit.ogImage: gate still passes', noHead.status === 0);
+  check('fixture (a): prints the one-line skip warning',
+    /head check\s+skipped — no "kit\.favicon" or "kit\.ogImage"/.test(noHead.out));
+
+  // fixture (b): both keys set, a compliant page -> PASS.
+  const withHead = { ...baseCfg, kit: { url: KIT_URL, favicon: FAVICON, ogImage: OG_IMAGE } };
+  fs.writeFileSync(cfgPath, JSON.stringify(withHead, null, 2) + '\n');
+  const pass = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir);
+  check('fixture (b): compliant page -> bbe-gate passes', pass.status === 0 && /^PASS$/m.test(pass.out));
+  check('fixture (b): reports zero HEAD hits', /HEAD hits: 0/.test(pass.out));
+  check('fixture (b): the head-check line names the favicon URL', pass.out.includes(FAVICON));
+  fixtureBOutput = pass.out;
+
+  // fixture (c): the favicon link goes missing -> FAIL, one HEAD hit, named. The kit
+  // stylesheet link stays, so the failure is isolated to the head check, not a second,
+  // unrelated KIT hit.
+  fs.writeFileSync(pagePath, `<!doctype html><html><head>
+<link rel="stylesheet" href="${KIT_URL}">
+<meta property="og:image" content="${OG_IMAGE}">
+<meta name="twitter:card" content="summary_large_image">
+</head><body></body></html>
+`);
+  const missingFavicon = run(process.execPath, [path.join(ROOT, 'bin', 'bbe-gate')], dir, { allowFail: true });
+  check('fixture (c): missing rel=icon -> bbe-gate fails', missingFavicon.status === 1);
+  check('fixture (c): HEAD hit names the file and the miss', /HEAD: index\.html:\d+ missing rel=icon/.test(missingFavicon.out));
+  check('fixture (c): BRAND is still 0 — this is a HEAD failure, not a ratchet failure', /BRAND hits: 0/.test(missingFavicon.out));
+  check('fixture (c): KIT is still 0 — the failure is isolated to the head check', /KIT hits: 0/.test(missingFavicon.out));
+  fixtureCOutput = missingFavicon.out;
+
+  // Restore a compliant page before cleanup so a --keep run inspects a passing repo.
+  fs.writeFileSync(pagePath, compliantPage);
+
+  if (!KEEP) fs.rmSync(dir, { recursive: true, force: true });
+  else log(`\nkept: ${dir}`);
+}
+
+let fixtureBOutput = '';
+let fixtureCOutput = '';
+
 log(`bbe new-surface smoke test — @andrew22lane/bbe ${JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version}`);
 
 log('');
@@ -232,8 +423,18 @@ check('refuses an unknown --kind', badKind.status === 1 && /must be site or work
 
 const dirs = [lane('site'), lane('worker')];
 
+kitEndToEndCheck();
+headEndToEndCheck();
+
 if (!KEEP) for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
 else log(`\nkept: ${dirs.join(' ')}`);
+
+if (process.env.BBE_PRINT_HEAD_FIXTURES) {
+  log('\n--- fixture (b) gate output, verbatim ---');
+  log(fixtureBOutput);
+  log('--- fixture (c) gate output, verbatim ---');
+  log(fixtureCOutput);
+}
 
 log('');
 if (failures) {

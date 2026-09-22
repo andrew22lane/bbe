@@ -47,7 +47,7 @@ Andrew's call, not a blocker.
 ## Install
 
 ```
-npm install @andrew22lane/bbe@1.2.0
+npm install @andrew22lane/bbe@1.5.0
 ```
 
 That is the GitHub Packages form and it needs a token. What every consumer in the
@@ -55,7 +55,7 @@ estate actually ships is the **git tag** form, which needs no registry, no `.npm
 and no secret anywhere:
 
 ```json
-"dependencies": { "@andrew22lane/bbe": "github:andrew22lane/bbe#v1.2.0" }
+"dependencies": { "@andrew22lane/bbe": "github:andrew22lane/bbe#v1.5.0" }
 ```
 
 Either way, pin an EXACT version. No carets, no ranges, no branch names. A range
@@ -191,7 +191,7 @@ The gate's CI steps live in `.github/workflows/bbe-gate.yml` in this repo, behin
 ```yaml
 jobs:
   brand-gate:
-    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.2.0
+    uses: andrew22lane/bbe/.github/workflows/bbe-gate.yml@v1.7.0
 ```
 
 It checks out, sets up Node, installs (`npm ci` with a lockfile, `npm install`
@@ -232,6 +232,125 @@ above. A pack carrying only SOME of the seven fails loudly rather than being gue
 checkout into each, builds, and asserts the gate reads zero. It runs in CI on every pull
 request. The fixture is the only pack this repo ships and it belongs to no client.
 
+## Kit check
+
+Brand-drift proves no raw hex outside the pack. It says nothing about whether two
+surfaces on the same brand LOOK alike, and eight bex surfaces each hand-typed their
+own button and passed it — two primary teals live at once. `bbe.config.json` gains
+an optional `kit` object:
+
+```json
+"kit": {
+  "url": "https://cdn.brandbuilderengine.com/<brand>/kit/<brand>-kit-v<N>.css",
+  "local": "kit/bex-kit-v1.css"
+}
+```
+
+`url` is the CDN kit URL every consumer surface links. `local` is only for the one
+repo per brand that BUILDS the kit file (e.g. `bex-site/kit/bex-kit-v1.css`), whose
+own pages link it by a local path instead of the CDN URL — `local` is accepted as an
+equivalent link target. **The file at `kit.local` is exempt from the hex ratchet
+automatically**, so a consumer does not also add `"kit"` (or the kit's own path) to
+`exclude` by hand — `bbe-gate` reads `kit.local` and excludes it itself.
+
+When `kit` is set, `bbe-gate` fails on any `.html`/`.mjs`/`.js`/`.css` file that does
+not link the kit FIRST, and on any `:root` token, `@font-face`, or bare
+`.btn`/`.btn-primary`/`.btn-ghost`/`.nav`/`body`/`h1`-`h4` rule declared outside the
+kit file itself (override the list with `kit.reserved`). There is no ratchet: unlike
+the hex baseline, one KIT hit fails the build, every time — `KIT hits: N` prints on
+its own line. **No `kit` object in the config at all** is not an error: the kit check
+is skipped with a one-line warning (`kit check    skipped — no "kit" in
+bbe.config.json`), so a brand with no kit yet keeps passing. `bbe new-surface` wires
+the link and a `kit`-aware `bbe.config.json` in automatically when the pack (or
+`--kit`) names one. Full law: `vault/core/ONE-SYSTEM-LAW.md` in dh-hub.
+
+## Head check
+
+Andrew, 2026-09-15: "same favicon should be used for all pages created, and a
+default branded share image must be auto set up for all pages made." The `kit`
+object gains two more optional keys, both absolute URLs:
+
+```json
+"kit": {
+  "url": "https://cdn.brandbuilderengine.com/<brand>/kit/<brand>-kit-v<N>.css",
+  "favicon": "https://cdn.brandbuilderengine.com/designhacker/brand/identity-2026/favicon/favicon.svg",
+  "ogImage": "https://cdn.brandbuilderengine.com/designhacker/brand/kit/dh-og-default.jpg"
+}
+```
+
+Each is independently **opt-in**, exactly like `kit` itself: a repo with neither key
+set behaves exactly as it did before this check existed, and a brand can wire in one
+before the other. When `kit.favicon` is set, every page (the same pages the kit-link
+check already looks at) must carry a `<link rel="icon" ...>` whose href resolves to
+EXACTLY `kit.favicon` — missing it, or pointing somewhere else, is one hit. When
+`kit.ogImage` is set, every page must carry a `<meta property="og:image"
+content="...">` with ANY non-empty value (a page's own share image, e.g. a blog
+post's card, is allowed to override the brand default — the VALUE is never compared
+to `kit.ogImage`, only its presence) and a `<meta name="twitter:card" content="...">`
+alongside it. There is no ratchet, the same posture as the kit-link check: one
+`HEAD` hit fails the build, every time. `bbe new-surface` wires the favicon and
+share-image tags into every generated page head, and `kit.favicon`/`kit.ogImage`
+into `bbe.config.json`, the moment the pack's `outputs.web.kit` (or `--favicon` /
+`--og-image`) names them. Full law: `vault/core/ONE-SYSTEM-LAW.md` in dh-hub.
+
+### Sites that build their pages: `buildDir`
+
+An engine site has no page in its source. `build.mjs` calls the engine, the engine
+writes each `<head>`, and the page only exists in `dist/` after `npm run build`. So on
+a fresh `bbe new-surface --kind site`, the head check used to print `(0 files checked)`
+and pass. It was reading nothing.
+
+Name the build directory in `bbe.config.json` and the gate reads it too:
+
+```json
+{ "pack": "gabriella", "exclude": [], "baseline": 0, "buildDir": "dist" }
+```
+
+- The head check reads every `.html` page in `buildDir`, and a hit points at the built
+  file (`HEAD: dist/index.html:1 missing rel=icon`).
+- The kit check runs its link-first half on those pages too. The reserved-token half
+  stays on the source, because built CSS is the source CSS plus whatever the engine
+  writes, and the engine isn't the surface's to fix.
+- A named `buildDir` that doesn't exist stops the gate with exit 2 and says to build first.
+- The reusable workflow runs `npm run build` before the gate when `buildDir` is set
+  (override with the `build-command` input). Without `buildDir` it builds nothing.
+- `bbe new-surface --kind site` writes `"buildDir": "dist"` for you.
+
+**A check that reads zero pages fails** with exit 2, head and kit alike, whatever the
+reason. A check that reads nothing and passes isn't a check. Measured across every
+consumer on `main` on 2026-09-15: one repo is affected by the kit half (`proveit-domain`,
+an engine site with no source page). Every other kit repo already has source pages the
+check reads. Adding `buildDir` clears both.
+
+## Script check
+
+On 2026-09-18 the VHC site was one click from its domain flip with every lead form
+dead. A copy edit put an apostrophe ("We'll") inside a single-quoted JavaScript string
+on the homepage and /start/, the form script threw a SyntaxError, and every gate
+passed. None of them read JavaScript as JavaScript. This check is always on, with no
+config key, because no site wants a script that does not run.
+
+- Every `.html` page the gate can see (source, plus `buildDir` when set) has each
+  inline `<script>` without a `src` parsed. Classic scripts compile with
+  `new vm.Script` (nothing runs), `type="module"` goes through `node --check`, and
+  JSON blocks (`application/ld+json`, `application/json`, `importmap`,
+  `speculationrules`) go through `JSON.parse`. Other types (`text/template`,
+  `text/plain`) are not code; they are skipped and counted in the output.
+- A hit names the page and the line the error is on:
+  `SCRIPT: launch/dist/index.html:1438 inline script does not parse: SyntaxError: missing ) after argument list`.
+  One hit fails the build. There is no ratchet.
+- A SOURCE template's `{{NAME}}` placeholders are read as `null` so the rest of the
+  script is still checked. In `buildDir` output nothing is substituted: a placeholder
+  left in a built page is the bug.
+- A named `buildDir` that is missing or holds no `.html` pages is BLIND and exits 2.
+  A repo with no pages at all (a worker) reads 0 pages and passes.
+- Pages rendered inside a worker's `.js` template literal are not read. Their scripts
+  are half `${...}` until they render.
+
+Proven on the real thing, 2026-09-19: VHC built at the broken commit (`b4f3b04^`)
+fails with the two dead pages named at the exact "We'll" line; VHC `main` passes
+(52 pages, 175 scripts + 85 JSON blocks parsed).
+
 ## How to add a consumer
 
 **For a brand-new surface, use `bbe new-surface` above; it does all of this.** What
@@ -259,11 +378,18 @@ gate and a rendered page in a real browser.
 
 ## Consumers
 
-| Repo | Status |
+Every consumer pins a tag, twice: the `@andrew22lane/bbe` devDependency in
+`package.json` and the `uses: ...bbe-gate.yml@vX` line in its workflow. The workflow
+pin decides which gate runs in CI. Measured on each repo's `main`, 2026-09-19:
+
+| Pinned at | Repos |
 |---|---|
-| `gab-site` | on `v1.0.1`, merged to `main` 2026-09-07. No engine mirror. |
-| `design-hacker-apex` | on `v1.0.1`, merged to `staging` 2026-09-07. No engine mirror. |
-| `bex-site` | pending. Its `engine/lib.mjs` IS the source of `v1.0.1`; it migrates after its `staging` → `main` merge lands. |
+| `v1.7.0` | `bbe-ask`, `bex-forms`, `bex-links`, `bex-members`, `bex-site`, `bexco-partner-library`, `dh-capture`, `dh-club`, `dh-library`, `embody-app`, `franchise-watchlist-site`, `gab-site`, `hh-content-calendar`, `hh-content-library`, `photographerceo-site`, `proveit-domain`, `vhc-site` |
+| `v1.7.0` on `staging`, promote pending | `design-hacker-apex` |
+| config only, no pin | `bexco-asset-library` |
+
+`buildDir` set (CI builds, then gates the built pages): `bex-site`, `gab-site`,
+`vhc-site`. Moving the whole estate onto a new tag: `scripts/estate-bump/README.md`.
 
 Nobody is bumped by a release here. A consumer moves when somebody changes its one
 pinned line and proves the output, and never as a side effect of a tag being pushed.

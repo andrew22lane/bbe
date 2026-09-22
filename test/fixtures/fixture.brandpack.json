@@ -27,6 +27,12 @@
         "name": "Fixture Brand",
         "themeColor": "#2F6F62"
       },
+      "kit": {
+        "_note": "Invented kit URL (this brand has no real kit file); favicon and ogImage are real, live Design Hacker CDN assets, reused here so the smoke test and kit-check.mjs exercise the actual v1.4.0 head check end to end, not another invented URL.",
+        "url": "https://cdn.brandbuilderengine.com/fixture/kit/fixture-kit-v1.css",
+        "favicon": "https://cdn.brandbuilderengine.com/designhacker/brand/identity-2026/favicon/favicon.svg",
+        "ogImage": "https://cdn.brandbuilderengine.com/designhacker/brand/kit/dh-og-default.jpg"
+      },
       "site": {
         "origin": "https://fixture.invalid",
         "base": ""

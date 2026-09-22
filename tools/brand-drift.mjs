@@ -77,6 +77,15 @@ function walk(dir, base, out) {
   }
 }
 
+// Exported so other gates (kit-drift.mjs) walk and exclude the exact same way
+// brand-drift does, instead of growing a second copy of this logic.
+export function walkFiles(root) {
+  const out = [];
+  walk(root, root, out);
+  return out;
+}
+export { isExcludedPath };
+
 // ---------- colour literal extraction ----------
 // Word-boundary hex: the char immediately before "#" must not be part of an identifier,
 // a path, or a URL-ish run, so a sha like 8d8241b099c298e5 or a fragment like /x#1c5e62

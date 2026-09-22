@@ -47,17 +47,19 @@ jobs:
           grep -q "bbe-gate.yml@v$V" templates/brand-gate.yml
           echo "templates/brand-gate.yml pins v$V"
 
-      - name: Engine bytes unchanged since v1.0.1
-        run: |
-          git fetch --tags --quiet || true
-          if git rev-parse -q --verify v1.0.1 >/dev/null; then
-            test -z "$(git diff v1.0.1 HEAD -- engine/)" && echo "engine/ byte-identical to v1.0.1"
-          else
-            echo "v1.0.1 tag not fetched in this checkout, skipping"
-          fi
+      - name: Engine output unchanged for pages without the bg-video block
+        # v1.6.0 changes engine/ on purpose (the bg-video block, ruled 2026-09-16).
+        # The invariant is the OUTPUT: pages without the block ship identical bytes.
+        run: node test/bg-video.mjs
 
       - name: brand-drift selftest
         run: node bin/bbe-gate --selftest
+
+      - name: kit-drift check (ONE-SYSTEM-LAW)
+        run: node test/kit-check.mjs
+
+      - name: head check (2026-09-15 favicon + share-image rule)
+        run: node test/head-check.mjs
 
       - name: new-surface smoke test (site + worker, scaffold to gate)
         run: node test/smoke.mjs
