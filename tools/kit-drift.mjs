@@ -204,6 +204,53 @@ function collectCssRegions(text, ext) {
   return regions;
 }
 
+// Split a selector list on TOP-LEVEL commas only: depth 0 outside parentheses and
+// brackets. `.bh :where(h1,h2,h3,p)` is ONE selector, not `.bh :where(h1`, `h2`, `h3`,
+// `p)`. The old plain split(',') read the inner h2 and h3 as bare selectors (measured on
+// dh-dashboard, 2026-09-30). Quoted strings inside [attr="a,b"] sit inside brackets, so
+// the bracket depth covers them.
+export function splitSelectorList(raw) {
+  const out = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of raw) {
+    if (ch === '(' || ch === '[') depth++;
+    else if ((ch === ')' || ch === ']') && depth > 0) depth--;
+    if (ch === ',' && depth === 0) { out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+// The selectors a rule actually styles, for judging against the reserved list. A
+// selector that is EXACTLY a top-level :is(...) or :where(...) with nothing scoping it
+// is unwrapped, so `:is(body,.y){}` counts as a bare `body` (an unscoped :is() styles
+// the element everywhere, same as writing `body`). Anything with a scope in front or a
+// compound around it (`.bh :where(h1,h2)`, `.dash :is(h1,h2)`, `:is(h1).x`) is NOT bare
+// and is returned whole, where it can never equal a reserved bare selector. `:not()`
+// is never unwrapped: `:not(h2)` styles everything except h2.
+export function effectiveSelectors(raw) {
+  const out = [];
+  for (const sel of splitSelectorList(raw)) {
+    const m = sel.match(/^:(?:is|where)\(([\s\S]*)\)$/i);
+    if (m && balanced(m[1])) out.push(...effectiveSelectors(m[1]));
+    else out.push(sel);
+  }
+  return out;
+}
+
+// True when the parens in `s` never close more than they open and end at depth 0, so
+// `:is(a):is(b)` (inner text `a):is(b`) is not mistaken for one wrapped group.
+function balanced(s) {
+  let depth = 0;
+  for (const ch of s) {
+    if (ch === '(') depth++;
+    else if (ch === ')' && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+
 // The link-first rule, for one page. Returns a hit, or null. Pulled out of scanKit
 // so a page in the source and a page a build wrote (opts.buildDir) are judged by
 // the same code.
@@ -315,7 +362,7 @@ export function scanKit(repoRoot, kitConfig, opts = {}) {
           continue;
         }
 
-        const selectors = selectorRaw.split(',').map((s) => s.trim()).filter(Boolean);
+        const selectors = effectiveSelectors(selectorRaw);
         const isRootBlock = selectors.some((s) => s === ':root' || /:root\b/.test(s));
         if (isRootBlock) {
           for (const prop of reservedProps) {

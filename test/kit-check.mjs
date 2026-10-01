@@ -318,5 +318,39 @@ return new Response(\`<!doctype html><meta charset="utf-8">
   rmSync(fx.dir, { recursive: true, force: true });
 }
 
+// ------------------------------------------------------------------ case 18-21
+// Selector lists inside :where() and :is() (v1.8.1). The old splitter cut on every comma,
+// so `.bh :where(h1,h2,h3,p)` read as bare h2 and h3. dh-dashboard, 2026-09-30.
+{
+  const run = (css) => {
+    const fx = fixture();
+    fx.write('index.html', `<!doctype html><html><head>
+<link rel="stylesheet" href="${KIT_URL}">
+</head><body></body></html>`);
+    fx.write('surface.css', css);
+    const r = scanKit(fx.dir, { url: KIT_URL }, {});
+    rmSync(fx.dir, { recursive: true, force: true });
+    return r;
+  };
+  const r18 = run('.bh :where(h1,h2,h3,p){margin:0}\n');
+  probe('case 18: .bh :where(h1,h2,h3,p) is scoped -> zero hits', r18.hits.length === 0);
+
+  const r19 = run('h2, .x{margin:0}\n');
+  probe('case 19: top-level `h2, .x` still fails on h2 (and only h2)',
+    r19.hits.length === 1 && /reserved selector h2 /.test(r19.hits[0].reason));
+
+  // A top-level :is() with no scope in front counts as bare: it styles body everywhere.
+  const r20 = run(':is(body,.y){margin:0}\n');
+  probe('case 20: unscoped :is(body,.y) is bare body -> one hit on body',
+    r20.hits.length === 1 && /reserved selector body /.test(r20.hits[0].reason));
+
+  const r21 = run('.dash :is(h1,h2){margin:0}\n');
+  probe('case 21: .dash :is(h1,h2) is scoped -> zero hits', r21.hits.length === 0);
+
+  const r22 = run('.dash :not(h2, h3), .a [data-x="1,2"] h2{margin:0}\nh1{margin:0}\n');
+  probe('case 22: :not() list and a comma in an attribute value stay whole; bare h1 still hits',
+    r22.hits.length === 1 && /reserved selector h1 /.test(r22.hits[0].reason));
+}
+
 console.log(`\n  ${failures === 0 ? 'kit-check PASS' : `kit-check FAIL, ${failures} problem(s)`}\n`);
 process.exit(failures === 0 ? 0 : 1);
