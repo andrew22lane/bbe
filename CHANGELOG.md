@@ -31,6 +31,7 @@ The nightly imported `scanRepo` and `DEFAULT_EXCLUDE` and built `[...DEFAULT_EXC
 - Measured before release: the heathers-heroes kit has 20 colours not in its pack, and
   franchise-watchlist has 0 both ways.
 - Tests: `test/gate-exclude.mjs`, `test/kit-pack.mjs`.
+- Also in this tag: engine/lib.mjs reveal script batches getBoundingClientRect reads before classList writes (PR 3, merged 2026-09-22, unreleased until now). Every engine-built page's inline reveal script changes by that one line; behaviour is meant to be identical.
 
 **Who gets it:** nobody, until they bump. The nightly in dh-hub is the first consumer.
 
