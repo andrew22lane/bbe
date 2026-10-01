@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gate-exclude.mjs — unit tests for tools/gate-exclude.mjs, the ONE exclude list.
+// gate-exclude.mjs: unit tests for tools/gate-exclude.mjs, the ONE exclude list.
 //
 //   node test/gate-exclude.mjs
 //
@@ -29,7 +29,7 @@ const probe = (label, cond) => {
 };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-console.log('\n  gate-exclude.mjs — effectiveExclude\n');
+console.log('\n  gate-exclude.mjs: effectiveExclude\n');
 
 const repoRoot = mkdtempSync(join(tmpdir(), 'bbe-gate-exclude-'));
 

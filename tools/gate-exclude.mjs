@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * gate-exclude.mjs — the ONE exclude list the hex ratchet scans with.
+ * gate-exclude.mjs: the ONE exclude list the hex ratchet scans with.
  *
  *   import { effectiveExclude } from '@andrew22lane/bbe/tools/gate-exclude.mjs';
  *   const exclude = effectiveExclude({ repoRoot, config });

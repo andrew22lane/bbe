@@ -3,7 +3,7 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
-## v1.8.0 — one exclude list, and the kit is checked against the pack
+## v1.8.0: one exclude list, and the kit is checked against the pack
 
 For 19 days the nightly estate job in dh-hub showed 7 of 18 surfaces in RATCHET BREACH
 that were fine. CI read 0 brand hits on those trees and the nightly read 154. Same code,
@@ -20,7 +20,9 @@ The nightly imported `scanRepo` and `DEFAULT_EXCLUDE` and built `[...DEFAULT_EXC
   `EXTRA_EXCLUDE` moved into it.
 - **New: the kit-pack check, `tools/kit-pack.mjs`, WARN tier.** When `kit.local` names a
   kit file, the gate lists the kit colours that are not in `brand/<pack>.brandpack.json`
-  and the pack `outputs.web.palette` colours the kit never uses. It prints
+  and the pack palette colours the kit never uses. The palette is `outputs.web.palette`,
+  else `tokens.color`, else every hex in the pack (only 3 of the 9 real packs carry
+  `outputs.web.palette`), and the source used is reported as `kitPack.paletteSource`. It prints
   `KIT-PACK: <n> kit colours not in pack: #...` and `KIT-PACK: <n> palette colours not in
   kit: #...`, and `--json` gains `kitPack: { kitNotInPack, paletteNotInKit }`. With no
   `kit.local` it reports `kitPack: { skipped: 'no kit.local' }`. It never changes the exit

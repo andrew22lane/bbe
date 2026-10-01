@@ -322,7 +322,7 @@ if (JSON_OUT) {
     },
     kitPack: kitPackResult.skipped
       ? { skipped: kitPackResult.skipped }
-      : { kitNotInPack: kitPackResult.kitNotInPack, paletteNotInKit: kitPackResult.paletteNotInKit },
+      : { kitNotInPack: kitPackResult.kitNotInPack, paletteNotInKit: kitPackResult.paletteNotInKit, paletteSource: kitPackResult.paletteSource },
     scripts: {
       checked: true,
       pagesChecked: scriptResult.pagesChecked,
@@ -421,7 +421,7 @@ if (kitPackResult.skipped) {
   const { kitNotInPack, paletteNotInKit } = kitPackResult;
   say(`  kit-pack     kit file colours vs brand/${config.pack}.brandpack.json (warn only, never fails the gate)`);
   say(`  KIT-PACK: ${kitNotInPack.length} kit colours not in pack${kitNotInPack.length ? ': ' + kitNotInPack.join(' ') : ''}`);
-  say(`  KIT-PACK: ${paletteNotInKit.length} palette colours not in kit${paletteNotInKit.length ? ': ' + paletteNotInKit.join(' ') : ''}`);
+  say(`  KIT-PACK: ${paletteNotInKit.length} palette colours not in kit (palette: ${kitPackResult.paletteSource})${paletteNotInKit.length ? ': ' + paletteNotInKit.join(' ') : ''}`);
 }
 
 // ---------------------------------------------------------------- --write-baseline

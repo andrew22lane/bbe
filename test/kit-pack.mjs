@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// kit-pack.mjs — tests for tools/kit-pack.mjs, the WARN-tier kit-vs-pack colour check.
+// kit-pack.mjs: tests for tools/kit-pack.mjs, the WARN-tier kit-vs-pack colour check.
 //
 //   node test/kit-pack.mjs
 //
@@ -8,9 +8,11 @@
 //   2. plant a kit colour the pack does not have, drop a palette colour from the kit ->
 //      both are reported, in text and in --json, and the exit code is the SAME as the control
 //   3. no kit.local -> kitPack is { skipped: 'no kit.local' }, exit code unchanged
+//   5. a pack with no outputs.web.palette: the palette side falls back to tokens.color,
+//      then to every hex in the pack, and paletteSource says which
 //   4. normalisation: #RGB, #RRGGBBAA and uppercase count as the same colour as 6-digit lowercase
 
-import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +47,7 @@ function repo(kitCss, { withKit = true } = {}) {
 const kitOf = (hexes) => `:root {\n${hexes.map((h, i) => `  --c${i}: ${h};`).join('\n')}\n}\n`;
 const gate = (dir, ...args) => spawnSync(process.execPath, [GATE, '--repo', dir, ...args], { encoding: 'utf8' });
 
-console.log('\n  kit-pack.mjs — kit colours vs pack\n');
+console.log('\n  kit-pack.mjs: kit colours vs pack\n');
 
 // 1. control
 const control = repo(kitOf(PALETTE));
@@ -61,12 +63,13 @@ const p = gate(planted, '--json');
 const pj = JSON.parse(p.stdout);
 probe('planted: the kit colour not in the pack is reported', same(pj.kitPack.kitNotInPack, ['#123456']));
 probe('planted: the palette colour not in the kit is reported', same(pj.kitPack.paletteNotInKit, ['#2a3c36']));
+probe('planted: --json records kitPack.paletteSource = outputs.web.palette', pj.kitPack.paletteSource === 'outputs.web.palette');
 probe('planted: exit code is unchanged from the control (WARN only)', p.status === c.status && p.status === 0);
 const pt = gate(planted);
 probe('planted: text prints "KIT-PACK: 1 kit colours not in pack: #123456"',
   pt.stdout.includes('KIT-PACK: 1 kit colours not in pack: #123456'));
-probe('planted: text prints "KIT-PACK: 1 palette colours not in kit: #2a3c36"',
-  pt.stdout.includes('KIT-PACK: 1 palette colours not in kit: #2a3c36'));
+probe('planted: text prints "KIT-PACK: 1 palette colours not in kit (palette: outputs.web.palette): #2a3c36"',
+  pt.stdout.includes('KIT-PACK: 1 palette colours not in kit (palette: outputs.web.palette): #2a3c36'));
 probe('planted: text run still ends in PASS and exits 0', pt.status === 0 && /\nPASS\n/.test(pt.stdout));
 
 // 3. no kit.local
@@ -81,8 +84,26 @@ probe('#FFF and #ffffff and #FFFFFFFF are one colour',
 probe('#RGBA drops the alpha: #f00a -> #ff0000', normaliseHex6('#f00a') === '#ff0000');
 probe('an id selector like #fade-in is not a colour', hexesIn('#fade-in { top: 0 }').size === 0);
 const norm = repo(kitOf(['#f4f1ea', '#E4DDCE', '#2f6f62', '#3d8a79', '#14231f', '#2A3C36CC']));
+const normR = scanKitPack(norm, { pack: 'fixture', kit: { local: 'kit/fx-kit-v1.css' } });
 probe('case and alpha differences do not create false misses',
-  same(scanKitPack(norm, { pack: 'fixture', kit: { local: 'kit/fx-kit-v1.css' } }), { kitNotInPack: [], paletteNotInKit: [] }));
+  same(normR.kitNotInPack, []) && same(normR.paletteNotInKit, []));
+
+// 5. palette fallback: a pack with no outputs.web.palette (6 of the 9 real packs)
+const fb = repo(kitOf(['#123456']));
+const fbPack = JSON.parse(readFileSync(join(fb, 'brand', 'fixture.brandpack.json'), 'utf8'));
+delete fbPack.outputs.web.palette;   // tokens.color.brandOnly (#4A2E8F) is all that is left
+writeFileSync(join(fb, 'brand', 'fixture.brandpack.json'), JSON.stringify(fbPack));
+const fbr = scanKitPack(fb, { pack: 'fixture', kit: { local: 'kit/fx-kit-v1.css' } });
+probe('no outputs.web.palette: falls back to tokens.color', fbr.paletteSource === 'tokens.color');
+probe('no outputs.web.palette: the tokens.color colour the kit lacks is reported', same(fbr.paletteNotInKit, ['#4a2e8f']));
+writeFileSync(join(fb, 'kit', 'fx-kit-v1.css'), kitOf(['#4A2E8F']));
+probe('tokens.color fallback: a kit that uses it reports none missing',
+  same(scanKitPack(fb, { pack: 'fixture', kit: { local: 'kit/fx-kit-v1.css' } }).paletteNotInKit, []));
+delete fbPack.tokens;                // now only identity.themeColor and the kit block hold a hex
+writeFileSync(join(fb, 'brand', 'fixture.brandpack.json'), JSON.stringify(fbPack));
+const anyHex = scanKitPack(fb, { pack: 'fixture', kit: { local: 'kit/fx-kit-v1.css' } });
+probe('no palette, no tokens.color: falls back to every hex in the pack', anyHex.paletteSource === 'any hex in pack');
+probe('any-hex fallback reads identity.themeColor (#2f6f62) as a palette colour', anyHex.paletteNotInKit.includes('#2f6f62'));
 
 console.log(failures ? `\n  KIT-PACK FAIL (${failures})\n` : '\n  KIT-PACK PASS\n');
 process.exit(failures ? 1 : 0);
