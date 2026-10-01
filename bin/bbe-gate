@@ -8,6 +8,7 @@
 //   npx bbe-gate --json             machine-readable result on stdout
 //   npx bbe-gate --selftest         plant a defect in a fixture, assert the scanner goes RED
 //
+// Warn tier, never an exit code: UNREGISTERED hex, and KIT-PACK (kit file colours vs the pack).
 // Exit 0 clean or improved. Exit 1 a check failed: the BRAND count rose above the
 // baseline, or a KIT, HEAD, BGVIDEO or SCRIPT hit.
 // Exit 2 the gate could not run (no config, no pack mirror, bad input, a named
@@ -57,6 +58,7 @@ import { scanKit, normalizeBuildDir } from '../tools/kit-drift.mjs';
 import { scanHead } from '../tools/head-check.mjs';
 import { scanBgVideo } from '../tools/bg-video-check.mjs';
 import { scanScripts } from '../tools/script-parse.mjs';
+import { scanKitPack } from '../tools/kit-pack.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DRIFT = path.join(HERE, '..', 'tools', 'brand-drift.mjs');
@@ -265,6 +267,12 @@ const scriptResult = scanScripts(repoRoot, { exclude: config.exclude || [], buil
 const scriptFailed = scriptResult.hits.length > 0;
 const scriptBlind = !!(buildDir && scriptResult.builtPagesChecked === 0);
 
+// ---------------------------------------------------------------- the kit-pack scan
+// WARN tier, like UNREGISTERED: it reports and NEVER touches the exit code (see the two-tier
+// law in the header). The kit file is where the pack's colours get painted. This lists the
+// kit colours the pack has never heard of, and the pack palette colours the kit never uses.
+const kitPackResult = scanKitPack(repoRoot, config);
+
 const exitCode = (rose || kitFailed || headFailed || bgVideoFailed || scriptFailed) ? 1 : ((headBlind || kitBlind || scriptBlind) ? 2 : 0);
 
 if (JSON_OUT) {
@@ -312,6 +320,9 @@ if (JSON_OUT) {
       hits: bgVideoResult.hits.length,
       violations: bgVideoResult.hits
     },
+    kitPack: kitPackResult.skipped
+      ? { skipped: kitPackResult.skipped }
+      : { kitNotInPack: kitPackResult.kitNotInPack, paletteNotInKit: kitPackResult.paletteNotInKit },
     scripts: {
       checked: true,
       pagesChecked: scriptResult.pagesChecked,
@@ -400,6 +411,17 @@ say('');
   for (const h of scriptResult.hits) say(`  SCRIPT: ${h.file}:${h.line} ${h.reason}`);
   say(`  SCRIPT hits: ${scriptResult.hits.length}`);
   if (scriptBlind) say(`  SCRIPT BLIND: ${buildDir}/ ${scriptResult.buildDirExists ? 'holds no .html pages' : 'does not exist'}, so the pages that ship were never parsed.`);
+}
+
+// ---------------------------------------------------------------- the kit-pack report
+say('');
+if (kitPackResult.skipped) {
+  say(`  kit-pack     skipped (${kitPackResult.skipped})`);
+} else {
+  const { kitNotInPack, paletteNotInKit } = kitPackResult;
+  say(`  kit-pack     kit file colours vs brand/${config.pack}.brandpack.json (warn only, never fails the gate)`);
+  say(`  KIT-PACK: ${kitNotInPack.length} kit colours not in pack${kitNotInPack.length ? ': ' + kitNotInPack.join(' ') : ''}`);
+  say(`  KIT-PACK: ${paletteNotInKit.length} palette colours not in kit${paletteNotInKit.length ? ': ' + paletteNotInKit.join(' ') : ''}`);
 }
 
 // ---------------------------------------------------------------- --write-baseline
