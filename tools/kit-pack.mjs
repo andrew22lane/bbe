@@ -16,9 +16,19 @@
  * Every colour is normalised to lowercase 6-digit hex. #rgb is expanded, and an alpha
  * byte (#rgba, #rrggbbaa) is dropped, so #FFF8 and #ffffff are the same colour here.
  *
- *   import { scanKitPack } from './kit-pack.mjs';
- *   const r = scanKitPack(repoRoot, config);
- *   // { skipped: 'no kit.local' } or { kitNotInPack, paletteNotInKit, paletteSource }
+ * Where the kit CSS comes from (kitSource):
+ *   "local"              kit.local, a file in this repo (the repo that builds the kit)
+ *   "url"                no kit.local, so kit.url is fetched (Node fetch, 10s timeout, redirects
+ *                        followed). 20 of 23 consumers link the CDN kit by kit.url only, and
+ *                        before v1.8.1 they were all skipped (the v1.8.0 WARN printed on 8 PRs)
+ *   "skipped: no kit"    neither is set
+ * A failed fetch is a WARN, never a crash and never an exit-code change. BBE_KIT_PACK_OFFLINE=1
+ * skips the fetch for air-gapped CI.
+ *
+ *   import { scanKitPack, scanKitPackAuto } from './kit-pack.mjs';
+ *   const r = scanKitPack(repoRoot, config);            // sync, kit.local only
+ *   const r = await scanKitPackAuto(repoRoot, config);  // kit.local, else fetch kit.url
+ *   // { skipped, kitSource } or { kitNotInPack, paletteNotInKit, paletteSource, kitSource }
  */
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -56,15 +66,15 @@ function paletteHexes(node, out = new Set()) {
   return out;
 }
 
-export function scanKitPack(repoRoot, config) {
-  const local = config && config.kit && config.kit.local;
-  if (!local) return { skipped: 'no kit.local' };
-  const kitPath = path.join(repoRoot, local.replace(/^\.?\//, ''));
-  if (!existsSync(kitPath)) return { skipped: `kit.local not found: ${local}` };
+const FETCH_TIMEOUT_MS = 10_000;
+
+// The comparison itself, on kit CSS text however it was obtained. Returns the report or a
+// { skipped } with no kitSource (the caller stamps it).
+function compareKitPack(kitText, repoRoot, config) {
   const packPath = path.join(repoRoot, 'brand', `${config.pack}.brandpack.json`);
   if (!existsSync(packPath)) return { skipped: 'no pack mirror' };
 
-  const kit = hexesIn(readFileSync(kitPath, 'utf8'));
+  const kit = hexesIn(kitText);
   const packText = readFileSync(packPath, 'utf8');
   const packAll = hexesIn(packText);
   // Only 3 of the 9 real packs carry outputs.web.palette, so fall back: tokens.color,
@@ -85,4 +95,60 @@ export function scanKitPack(repoRoot, config) {
     paletteNotInKit: [...palette].filter((h) => !kit.has(h)).sort(),
     paletteSource
   };
+}
+
+// Sync, local kit only. With no kit.local this is { skipped: 'no kit.local' } (kit.url is
+// the async path, scanKitPackAuto).
+export function scanKitPack(repoRoot, config) {
+  const local = config && config.kit && config.kit.local;
+  if (!local) return { skipped: 'no kit.local', kitSource: 'skipped: no kit' };
+  const kitPath = path.join(repoRoot, local.replace(/^\.?\//, ''));
+  if (!existsSync(kitPath)) return { skipped: `kit.local not found: ${local}`, kitSource: 'skipped: no kit' };
+  const r = compareKitPack(readFileSync(kitPath, 'utf8'), repoRoot, config);
+  return { ...r, kitSource: r.skipped ? 'skipped: no kit' : 'local' };
+}
+
+/**
+ * kit.local if set, else fetch kit.url and compare the same way.
+ *
+ * Never throws and never rejects: a fetch failure comes back as
+ * { skipped, fetchError, kitSource: 'skipped: fetch failed' } and the gate prints it as
+ * `KIT-PACK: could not fetch kit.url (<reason>)`.
+ *
+ * @param {{timeoutMs?: number, offline?: boolean, fetchImpl?: typeof fetch}} opts
+ *   `offline` defaults to BBE_KIT_PACK_OFFLINE=1. `timeoutMs` defaults to 10000.
+ */
+export async function scanKitPackAuto(repoRoot, config, opts = {}) {
+  const kit = (config && config.kit) || {};
+  if (kit.local) return scanKitPack(repoRoot, config);
+  if (!kit.url) return { skipped: 'no kit.local', kitSource: 'skipped: no kit' };
+
+  const offline = opts.offline ?? process.env.BBE_KIT_PACK_OFFLINE === '1';
+  if (offline) return { skipped: 'BBE_KIT_PACK_OFFLINE=1', kitSource: 'skipped: offline' };
+  // No pack mirror means there is nothing to compare against, so do not spend a fetch.
+  if (!existsSync(path.join(repoRoot, 'brand', `${config.pack}.brandpack.json`))) {
+    return { skipped: 'no pack mirror', kitSource: 'skipped: no kit' };
+  }
+
+  let css;
+  try {
+    const doFetch = opts.fetchImpl || fetch;
+    const res = await doFetch(kit.url, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(opts.timeoutMs ?? FETCH_TIMEOUT_MS)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    css = await res.text();
+  } catch (err) {
+    const name = err && err.name;
+    const reason = name === 'TimeoutError' || name === 'AbortError'
+      ? 'timed out'
+      : String(
+          (err && err.cause && (err.cause.code || (err.cause.errors && err.cause.errors[0] && err.cause.errors[0].code) || err.cause.message)) ||
+          (err && err.message) || err
+        );
+    return { skipped: `could not fetch kit.url (${reason})`, fetchError: reason, kitSource: 'skipped: fetch failed' };
+  }
+  const r = compareKitPack(css, repoRoot, config);
+  return { ...r, kitSource: r.skipped ? 'skipped: no kit' : 'url' };
 }

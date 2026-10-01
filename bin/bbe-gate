@@ -58,7 +58,7 @@ import { scanKit, normalizeBuildDir } from '../tools/kit-drift.mjs';
 import { scanHead } from '../tools/head-check.mjs';
 import { scanBgVideo } from '../tools/bg-video-check.mjs';
 import { scanScripts } from '../tools/script-parse.mjs';
-import { scanKitPack } from '../tools/kit-pack.mjs';
+import { scanKitPackAuto } from '../tools/kit-pack.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DRIFT = path.join(HERE, '..', 'tools', 'brand-drift.mjs');
@@ -271,7 +271,7 @@ const scriptBlind = !!(buildDir && scriptResult.builtPagesChecked === 0);
 // WARN tier, like UNREGISTERED: it reports and NEVER touches the exit code (see the two-tier
 // law in the header). The kit file is where the pack's colours get painted. This lists the
 // kit colours the pack has never heard of, and the pack palette colours the kit never uses.
-const kitPackResult = scanKitPack(repoRoot, config);
+const kitPackResult = await scanKitPackAuto(repoRoot, config);
 
 const exitCode = (rose || kitFailed || headFailed || bgVideoFailed || scriptFailed) ? 1 : ((headBlind || kitBlind || scriptBlind) ? 2 : 0);
 
@@ -321,8 +321,8 @@ if (JSON_OUT) {
       violations: bgVideoResult.hits
     },
     kitPack: kitPackResult.skipped
-      ? { skipped: kitPackResult.skipped }
-      : { kitNotInPack: kitPackResult.kitNotInPack, paletteNotInKit: kitPackResult.paletteNotInKit, paletteSource: kitPackResult.paletteSource },
+      ? { skipped: kitPackResult.skipped, kitSource: kitPackResult.kitSource, ...(kitPackResult.fetchError ? { fetchError: kitPackResult.fetchError } : {}) }
+      : { kitNotInPack: kitPackResult.kitNotInPack, paletteNotInKit: kitPackResult.paletteNotInKit, paletteSource: kitPackResult.paletteSource, kitSource: kitPackResult.kitSource },
     scripts: {
       checked: true,
       pagesChecked: scriptResult.pagesChecked,
@@ -415,11 +415,13 @@ say('');
 
 // ---------------------------------------------------------------- the kit-pack report
 say('');
-if (kitPackResult.skipped) {
+if (kitPackResult.fetchError) {
+  say(`  KIT-PACK: could not fetch kit.url (${kitPackResult.fetchError})`);
+} else if (kitPackResult.skipped) {
   say(`  kit-pack     skipped (${kitPackResult.skipped})`);
 } else {
   const { kitNotInPack, paletteNotInKit } = kitPackResult;
-  say(`  kit-pack     kit file colours vs brand/${config.pack}.brandpack.json (warn only, never fails the gate)`);
+  say(`  kit-pack     kit colours (${kitPackResult.kitSource === 'url' ? 'fetched from kit.url' : 'kit.local'}) vs brand/${config.pack}.brandpack.json (warn only, never fails the gate)`);
   say(`  KIT-PACK: ${kitNotInPack.length} kit colours not in pack${kitNotInPack.length ? ': ' + kitNotInPack.join(' ') : ''}`);
   say(`  KIT-PACK: ${paletteNotInKit.length} palette colours not in kit (palette: ${kitPackResult.paletteSource})${paletteNotInKit.length ? ': ' + paletteNotInKit.join(' ') : ''}`);
 }
