@@ -3,6 +3,37 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
+## v1.8.0: one exclude list, and the kit is checked against the pack
+
+For 19 days the nightly estate job in dh-hub showed 7 of 18 surfaces in RATCHET BREACH
+that were fine. CI read 0 brand hits on those trees and the nightly read 154. Same code,
+same trees. The cause was TQ-101's failure class: two exclude lists reaching one scanner.
+`bbe-gate` built its list inline (defaults, `tools`, `exclude`, the kit file, `buildDir`).
+The nightly imported `scanRepo` and `DEFAULT_EXCLUDE` and built `[...DEFAULT_EXCLUDE,
+...config.exclude]` itself, so it missed `tools`, the kit file and `buildDir`.
+
+- **New: `tools/gate-exclude.mjs`, `effectiveExclude({ repoRoot, config })`.** It returns
+  exactly the list `bbe-gate` used to build, in the same order. `bbe-gate` now calls it,
+  and the nightly imports it, so CI and the nightly cannot disagree. Gate behaviour is
+  unchanged: same `--json` and same text output on a repo with `exclude`, `kit.local` and
+  `buildDir`, and the selftest and every existing test give the same results.
+  `EXTRA_EXCLUDE` moved into it.
+- **New: the kit-pack check, `tools/kit-pack.mjs`, WARN tier.** When `kit.local` names a
+  kit file, the gate lists the kit colours that are not in `brand/<pack>.brandpack.json`
+  and the pack palette colours the kit never uses. The palette is `outputs.web.palette`,
+  else `tokens.color`, else every hex in the pack (only 3 of the 9 real packs carry
+  `outputs.web.palette`), and the source used is reported as `kitPack.paletteSource`. It prints
+  `KIT-PACK: <n> kit colours not in pack: #...` and `KIT-PACK: <n> palette colours not in
+  kit: #...`, and `--json` gains `kitPack: { kitNotInPack, paletteNotInKit }`. With no
+  `kit.local` it reports `kitPack: { skipped: 'no kit.local' }`. It never changes the exit
+  code: a gate that goes red on routine work gets switched off. Colours are compared as
+  lowercase 6-digit hex, alpha dropped.
+- Measured before release: the heathers-heroes kit has 20 colours not in its pack, and
+  franchise-watchlist has 0 both ways.
+- Tests: `test/gate-exclude.mjs`, `test/kit-pack.mjs`.
+
+**Who gets it:** nobody, until they bump. The nightly in dh-hub is the first consumer.
+
 ## v1.7.0 — every inline script must parse
 
 On 2026-09-18 the VHC site (andrew22lane/vhc-site) was one click from its domain flip
