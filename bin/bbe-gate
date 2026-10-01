@@ -51,7 +51,8 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { scanRepo, DEFAULT_EXCLUDE } from '../tools/brand-drift.mjs';
+import { scanRepo } from '../tools/brand-drift.mjs';
+import { effectiveExclude, kitLocalExclude as kitLocalExcludeOf } from '../tools/gate-exclude.mjs';
 import { scanKit, normalizeBuildDir } from '../tools/kit-drift.mjs';
 import { scanHead } from '../tools/head-check.mjs';
 import { scanBgVideo } from '../tools/bg-video-check.mjs';
@@ -60,9 +61,6 @@ import { scanScripts } from '../tools/script-parse.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DRIFT = path.join(HERE, '..', 'tools', 'brand-drift.mjs');
 const PKG = JSON.parse(readFileSync(path.join(HERE, '..', 'package.json'), 'utf8'));
-
-// Excluded on top of brand-drift's defaults, for every repo on this gate.
-const EXTRA_EXCLUDE = ['tools'];
 
 const CONFIG_NAME = 'bbe.config.json';
 const LEGACY_BASELINE = path.join('tools', 'brand-gate-baseline.json');
@@ -198,12 +196,12 @@ if (buildDir && config.kit && !existsSync(path.join(repoRoot, buildDir))) {
 // repo names it here — a consumer no longer types "kit" (or the kit's own path) into
 // "exclude" by hand to get the same effect. Every one of the seven 2026-09-13 kit mints
 // needed that manual exclude before this; this is the fix so the next one does not.
-const kitLocalExclude = (config.kit && config.kit.local) ? [config.kit.local.replace(/^\.?\//, '')] : [];
-// buildDir is build OUTPUT: it carries the pack's colors the engine wrote back into CSS.
-// Kept out of the hex ratchet so a buildDir the defaults do not already skip ("public",
-// "out") never counts the pack against itself. The kit and head scans read it on purpose.
-const buildDirExclude = buildDir ? [buildDir] : [];
-const exclude = [...DEFAULT_EXCLUDE, ...EXTRA_EXCLUDE, ...(config.exclude || []), ...kitLocalExclude, ...buildDirExclude];
+// The list itself (defaults, `tools`, config.exclude, the kit file, buildDir) is built by
+// tools/gate-exclude.mjs, the same function the nightly estate job imports. One list, so
+// CI and the nightly cannot disagree (TQ-101). The kit file and buildDir exemptions are
+// explained there.
+const exclude = effectiveExclude({ repoRoot, config });
+const kitLocalExclude = kitLocalExcludeOf(config);
 
 // ---------------------------------------------------------------- the scan
 // Positional call, the same exported function vault/core/engine/estate-status.mjs

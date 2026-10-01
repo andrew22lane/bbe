@@ -15,6 +15,7 @@ of copy.
 | `engine/lib.mjs` | The shared static-site engine core. The `<head>` skeleton, the page wrapper, escape and clamp helpers, URL building, breadcrumbs, the reveal and crumb scripts, the two brand-blind JSON-LD builders. Holds zero brand facts. |
 | `tools/gate-lint.mjs` | The gate. Seven checks; five delegate to a gate that already exists. `bbe-gate` on the CLI. |
 | `tools/brand-drift.mjs` | The scanner `gate-lint` calls. Counts hardcoded brand facts in a repo against a pack. |
+| `tools/gate-exclude.mjs` | `effectiveExclude({ repoRoot, config })`: the one exclude list the hex ratchet scans with. `bbe-gate` calls it, and the nightly imports it so CI and the nightly cannot disagree. |
 | `tools/build-tokens.mjs` | Generates `src/tokens.generated.js` from a brand pack's `outputs.web`. `bbe-tokens` on the CLI. |
 | `tools/verify-byte-identity.mjs` | Walks two build trees, sha256s every file, exits 1 on any difference. The proof every migration ships with. |
 | `bin/bbe-new-surface` | The scaffold. Writes a new site or worker that reads a brand pack for every colour and has the gate in CI at a baseline of zero. `bbe new-surface` on the CLI. |
