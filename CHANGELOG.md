@@ -3,6 +3,44 @@
 All notable changes to `@andrew22lane/bbe`. Tags are the source of truth; this file explains
 what changed and why, in plain terms, for a consumer deciding whether to bump.
 
+## v1.8.1: selector lists inside :where() and :is(), and kit-pack parity from kit.url
+
+Two defects found on 2026-09-30, one in the kit check and one in the v1.8.0 kit-pack WARN.
+
+**The kit check read `:where(h1,h2,h3,p)` as bare `h2` and `h3`.** `tools/kit-drift.mjs`
+split a selector list on every comma, parentheses or not. So `.bh :where(h1,h2,h3,p){}` was
+cut into `.bh :where(h1`, `h2`, `h3` and `p)`, and `h2` and `h3` matched the reserved bare
+selectors. dh-dashboard hit it tonight, and worked around it by splitting the rule into four
+separate `:where()` rules. That workaround is no longer needed.
+
+- **Fixed: the splitter cuts only on top-level commas** (depth 0, outside parentheses and
+  brackets), then judges each selector as before. `.bh :where(h1,h2,h3,p)` and
+  `.dash :is(h1,h2)` are scoped under a class, so they pass. `h2, .x` still fails on `h2`.
+- **One rule you should know:** a top-level `:is()` or `:where()` with nothing in front of
+  it counts as bare, because it styles the element everywhere. `:is(body,.y){}` is a bare
+  `body` and fails. `:not()` is never unwrapped.
+
+**The kit-pack WARN printed on 8 of 23 consumers.** v1.8.0 only ran it when `kit.local` was
+set. 20 of 23 consumers link the CDN kit by `kit.url` and have no local kit file, so they
+were skipped, and the WARN showed on 8 PRs tonight instead of the full estate.
+
+- **Fixed: with no `kit.local` and a `kit.url`, the gate fetches the kit** (Node fetch, 10
+  second timeout, redirects followed) and runs the same comparison on the fetched CSS.
+  `kitPack.kitSource` says where the CSS came from: `"local"`, `"url"`, or
+  `"skipped: no kit"`. If `kit.local` is set it still wins and nothing is fetched.
+- **A failed fetch is a WARN, never a failure.** The gate prints `KIT-PACK: could not fetch
+  kit.url (<reason>)`, the exit code does not change, and nothing crashes.
+- **New: `BBE_KIT_PACK_OFFLINE=1` skips the fetch** for air-gapped CI. `--json` then reports
+  `kitPack: { skipped: 'BBE_KIT_PACK_OFFLINE=1', kitSource: 'skipped: offline' }`.
+- `--json` `kitPack` always carries `kitSource` now, and a failed fetch adds `fetchError`.
+  `scanKitPackAuto(repoRoot, config)` is the new async entry point. `scanKitPack` stays sync
+  and local only.
+- Tests: `test/kit-check.mjs` cases 18 to 22, `test/kit-pack.mjs` (a tiny local `node:http`
+  server, so no network is needed).
+
+**Who gets it:** nobody, until they bump. Expect the KIT-PACK line to start showing on the
+consumers that only had `kit.url`.
+
 ## v1.8.0: one exclude list, and the kit is checked against the pack
 
 For 19 days the nightly estate job in dh-hub showed 7 of 18 surfaces in RATCHET BREACH
