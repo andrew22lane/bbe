@@ -1,6 +1,9 @@
 # @andrew22lane/bbe
 
-The Brand Builder Engine, as one installable package. Private. Internal.
+The Brand Builder Engine, as one installable package.
+
+**This repo is PUBLIC, on purpose** (Andrew, 2026-11-26). Every site installs it straight from GitHub with
+no token. So nothing brand-specific goes in here: no client names, no prices, no keys, no data.
 
 Before this repo existed, `engine/lib.mjs` lived in `bex-site` and was byte-copied
 by hand into `design-hacker-apex` and `gab-site`. A parity script existed and
